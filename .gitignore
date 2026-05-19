@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.js
+!.github/**/*.js
+.DS_Store

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "opencode-usage-monitor",
+  "version": "1.0.0",
+  "description": "OpenCode TUI sidebar plugin that displays API usage quotas for OpenAI and Z.AI (GLM) providers",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "oc-plugin": ["tui"],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./tui": {
+      "import": "./tui.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "bun build src/tui.ts --outfile dist/tui.js --target bun --format esm --external @opencode-ai/plugin --external @opentui/solid --external solid-js",
+    "build:index": "bun build src/index.ts --outfile dist/index.js --target bun --format esm --external @opencode-ai/plugin --external @opencode-ai/sdk",
+    "build:types": "bun x tsc --emitDeclarationOnly",
+    "build:all": "bun run build:index && bun run build && bun run build:types",
+    "test": "bun test",
+    "typecheck": "bun x tsc --noEmit",
+    "dev:install": "cp dist/tui.js tui.js",
+    "prepublishOnly": "bun run build:all"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "usage",
+    "monitor",
+    "openai",
+    "zai",
+    "glm",
+    "quota",
+    "sidebar",
+    "tui"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/opencode-usage-monitor.git"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.4.0",
+    "@opentui/solid": ">=0.1.0",
+    "solid-js": ">=1.8.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  }
+}
