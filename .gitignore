@@ -3,3 +3,8 @@ dist/
 *.js
 !.github/**/*.js
 .DS_Store
+.env
+.env.*
+*.pem
+*.key
+coverage/
