@@ -14,6 +14,7 @@ OpenCode TUI sidebar plugin that displays API usage quotas for OpenAI and Z.AI (
 - Supports dedicated plugin configuration and `oh-my-openagent.json` integration.
 - Redacts secrets from error messages before rendering them in the TUI.
 - Uses stale-data indicators and guarded refreshes to avoid overlapping API calls.
+- Features two-level toggle: main panel collapse/expand and provider-level detail views.
 
 ## Requirements
 
@@ -33,8 +34,8 @@ Register the package in your OpenCode plugin configuration according to your Ope
 ### Local checkout
 
 ```bash
-git clone https://github.com/user/opencode-usage-monitor.git
-cd opencode-usage-monitor
+git clone https://git.mark1708.ru/me/opencode/usage-monitor.git
+cd usage-monitor
 bun install
 bun run build:all
 ```
@@ -49,13 +50,18 @@ The plugin reads a dedicated configuration file first:
 {
   "enabled": true,
   "default_collapsed": false,
+  "default_provider_collapsed": true,
+  "debug": false,
   "refresh_ms": 60000,
   "request_timeout_ms": 15000,
   "show_openai": true,
   "show_zai": true,
   "show_details": true,
   "width": 34,
-  "symbols": "unicode"
+  "symbols": "unicode",
+  "max_detail_lines": 4,
+  "max_windows": 3,
+  "max_model_lines": 1
 }
 ```
 
@@ -72,13 +78,18 @@ Alternatively, add a `usage_monitor` section to `oh-my-openagent.json`:
   "usage_monitor": {
     "enabled": true,
     "default_collapsed": false,
+    "default_provider_collapsed": true,
+    "debug": false,
     "refresh_ms": 60000,
     "request_timeout_ms": 15000,
     "show_openai": true,
     "show_zai": true,
     "show_details": true,
     "width": 34,
-    "symbols": "unicode"
+    "symbols": "unicode",
+    "max_detail_lines": 4,
+    "max_windows": 3,
+    "max_model_lines": 1
   }
 }
 ```
@@ -97,6 +108,8 @@ export OPENAI_ADMIN_KEY="your-admin-key"
 
 The plugin can detect `OPENAI_API_KEY` or an OpenCode `auth.json` OpenAI entry, but those credentials are marked unsupported for organization usage endpoints unless they are admin keys.
 
+Features two-level toggle: main panel collapse/expand and provider-level detail views. OpenAI displays primary + secondary windows with rate limits.
+
 ### Z.AI and GLM
 
 The plugin supports Z.AI and Zhipu/GLM credentials from OpenCode auth storage or environment variables:
@@ -107,6 +120,16 @@ export ZAI_CODING_PLAN_API_KEY="your-coding-plan-key"
 export ZHIPU_API_KEY="your-zhipu-key"
 export ZHIPUAI_API_KEY="your-zhipuai-key"
 ```
+
+Provider-level detail views can be toggled collapsed/expanded independently of the main panel state.
+
+## Usage
+
+- Click the main usage header to collapse/expand the entire panel
+- Click individual provider rows to toggle provider details (OpenAI has primary + secondary windows, providers can be toggled collapsed/expanded)
+- Use `/usage-refresh` slash command or press `shift+r` to manually refresh
+- Cache is stored at `~/.cache/opencode/usage-monitor.json`
+- Render errors are caught and displayed safely within an error boundary
 
 ## Development
 
@@ -131,13 +154,27 @@ Available scripts:
 .
 ├── src/
 │   ├── auth.ts
+│   ├── cache.ts
 │   ├── config.ts
 │   ├── format.ts
 │   ├── index.ts
-│   ├── providers.ts
+│   ├── layout.ts
+│   ├── sanitize.ts
+│   ├── severity.ts
+│   ├── tui.test.ts
 │   ├── tui.ts
-│   └── types.ts
-├── tui.test.ts
+│   ├── providers/
+│   │   ├── openai.ts
+│   │   ├── registry.ts
+│   │   ├── shared.ts
+│   │   ├── types.ts
+│   │   └── zai.ts
+│   └── views/
+│       ├── common.ts
+│       ├── index.ts
+│       ├── openai-view.ts
+│       ├── types.ts
+│       └── zai-view.ts
 ├── package.json
 ├── tsconfig.json
 ├── README.md
@@ -152,6 +189,11 @@ Available scripts:
 - If the panel is too wide or narrow, adjust `width` in `usage-monitor.json`.
 - If refreshes appear stale, lower `refresh_ms` or check network access to provider APIs.
 - If build output is missing, run `bun run build:all` and verify `dist/index.js` and `dist/tui.js` exist.
+- If data appears stale, check cache location at `~/.cache/opencode/usage-monitor.json`.
+
+## Screenshots
+
+<!-- TODO: add screenshot -->
 
 ## License
 
