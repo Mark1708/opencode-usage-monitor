@@ -34,7 +34,7 @@ Register the package in your OpenCode plugin configuration according to your Ope
 ### Local checkout
 
 ```bash
-git clone https://git.mark1708.ru/me/opencode/usage-monitor.git
+git clone https://github.com/Mark1708/opencode-usage-monitor.git
 cd usage-monitor
 bun install
 bun run build:all
