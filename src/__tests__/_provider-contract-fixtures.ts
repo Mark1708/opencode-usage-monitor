@@ -24,7 +24,7 @@ export function makeFixtureDefinition(
       displayName: "Fixture",
       catalogOrder,
       officialApi: {
-        baseUrl: "https://api.example.test",
+        baseUrls: ["https://api.example.test"],
         documentationUrl: "https://docs.example.test/usage",
         endpoints: [{ method: "GET", path: "/usage" }],
       },

@@ -1,15 +1,24 @@
 /// <reference types="bun" />
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   BUILTIN_PROVIDER_CATALOG,
   createProviderCatalog,
 } from "../providers/builtins.js";
 import {
+  mockJsonResponse,
+  restoreFetch,
+  zaiFixture,
+} from "./_helpers.js";
+import {
   makeFixtureDefinition,
   readyProvider,
 } from "./_provider-contract-fixtures.js";
+
+afterEach(() => {
+  restoreFetch();
+});
 
 describe("v2 built-in provider catalog", () => {
   test("has unique provider ids and catalog orders in deterministic order", () => {
@@ -27,8 +36,24 @@ describe("v2 built-in provider catalog", () => {
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first?.metadata)).toBe(true);
     expect(Object.isFrozen(first?.metadata.officialApi)).toBe(true);
+    expect(Object.isFrozen(first?.metadata.officialApi.baseUrls)).toBe(true);
     expect(Object.isFrozen(first?.metadata.officialApi.endpoints)).toBe(true);
     expect(Reflect.set(BUILTIN_PROVIDER_CATALOG, 0, makeFixtureDefinition().registration)).toBe(false);
+  });
+
+  test("publishes every official host and data-shaping endpoint", () => {
+    const zai = BUILTIN_PROVIDER_CATALOG.find((entry) => entry.metadata.id === "zai");
+    const deepseek = BUILTIN_PROVIDER_CATALOG.find((entry) => entry.metadata.id === "deepseek");
+
+    expect(zai?.metadata.officialApi.baseUrls).toEqual([
+      "https://api.z.ai",
+      "https://open.bigmodel.cn",
+    ]);
+    expect(zai?.metadata.officialApi.endpoints.map((endpoint) => endpoint.path)).toEqual([
+      "/api/monitor/usage/quota/limit",
+      "/api/monitor/usage/quota/limit?type=2",
+    ]);
+    expect(deepseek?.metadata.officialApi.baseUrls).toEqual(["https://api.deepseek.com"]);
   });
 
   test("excludes OpenAI according to ADR 0001", () => {
@@ -65,5 +90,21 @@ describe("v2 built-in provider catalog", () => {
   test("accepts a fixture definition without a central provider switch", () => {
     const fixture = makeFixtureDefinition().registration;
     expect(createProviderCatalog([...BUILTIN_PROVIDER_CATALOG, fixture])).toContain(fixture);
+  });
+
+  test("executes a catalog provider fetch instead of a placeholder", async () => {
+    const registration = BUILTIN_PROVIDER_CATALOG.find((entry) => entry.metadata.id === "zai");
+    const parsed = registration?.parseOptions({});
+    expect(parsed?.ok).toBe(true);
+    if (!parsed?.ok) return;
+    mockJsonResponse(zaiFixture());
+
+    const provider = await parsed.value.fetchUsage({
+      credential: { secret: "zai-token", source: "env", variant: "zai", epoch: 1 },
+      signal: new AbortController().signal,
+      timeoutMs: 1000,
+    });
+
+    expect(provider.status).toBe("ready");
   });
 });

@@ -23,7 +23,7 @@ export type OfficialApiEndpoint = Readonly<{
 }>;
 
 export type OfficialApiMetadata = Readonly<{
-  baseUrl: string;
+  baseUrls: readonly string[];
   documentationUrl: string;
   endpoints: readonly OfficialApiEndpoint[];
 }>;
@@ -151,8 +151,9 @@ function createBinding<TOptions>(
 }
 
 function freezeMetadata(metadata: ProviderMetadata): ProviderMetadata {
+  const baseUrls = Object.freeze([...metadata.officialApi.baseUrls]);
   const endpoints = Object.freeze(metadata.officialApi.endpoints.map((endpoint) => Object.freeze({ ...endpoint })));
-  const officialApi = Object.freeze({ ...metadata.officialApi, endpoints });
+  const officialApi = Object.freeze({ ...metadata.officialApi, baseUrls, endpoints });
   return Object.freeze({ ...metadata, officialApi });
 }
 
