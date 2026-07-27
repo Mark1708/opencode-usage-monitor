@@ -25,6 +25,7 @@ type ZaiLimit = {
 export const zaiUsageAdapter: UsageProviderAdapter = {
   id: "zai",
   displayName: "z.ai",
+  configKey: "show_zai",
   isAvailable: () => true,
   fetchUsage: fetchZaiUsage,
 };
@@ -33,10 +34,20 @@ async function fetchZaiUsage(ctx: ProviderContext, signal: AbortSignal): Promise
   const credential = discoverZaiCredential(ctx.auth, ctx.env);
   if (!("token" in credential)) return statusProvider("missing-auth", credential.message);
 
+  const organizationId = resolveSetting(ctx.config.zai_organization_id, ctx.env.ZHIPU_ORGANIZATION_ID);
+  const projectId = resolveSetting(ctx.config.zai_project_id, ctx.env.ZHIPU_PROJECT_ID);
+  const enterprise = organizationId !== undefined && projectId !== undefined;
+  const path = enterprise ? `${QUOTA_PATH}?type=2` : QUOTA_PATH;
+  const headers: Record<string, string> = { Authorization: credential.token, Accept: "application/json" };
+  if (enterprise) {
+    headers["Bigmodel-Organization"] = organizationId;
+    headers["Bigmodel-Project"] = projectId;
+  }
+
   const controller = createTimeoutController(ctx.timeoutMs, signal);
   try {
-    const response = await fetch(`${credential.baseUrl}${QUOTA_PATH}`, {
-      headers: { Authorization: credential.token, Accept: "application/json" },
+    const response = await fetch(`${credential.baseUrl}${path}`, {
+      headers,
       signal: controller.signal,
     });
     if (response.status === 401 || response.status === 403) return statusProvider("forbidden", "forbidden");
@@ -47,6 +58,12 @@ async function fetchZaiUsage(ctx: ProviderContext, signal: AbortSignal): Promise
   } finally {
     controller.dispose();
   }
+}
+
+function resolveSetting(configValue: string | undefined, envValue: string | undefined): string | undefined {
+  if (typeof configValue === "string" && configValue.length > 0) return configValue;
+  if (typeof envValue === "string" && envValue.length > 0) return envValue;
+  return undefined;
 }
 
 export function normalizeZaiQuota(raw: unknown, baseUrl: string = "https://api.z.ai", nowMs: number = Date.now()): StandardUsageProvider {
@@ -136,7 +153,7 @@ function parseUsageDetails(raw: unknown): StandardModelBreakdown[] | undefined {
 
 function labelForLimit(limit: ZaiLimit): string {
   if (limit.unit === 3 && limit.number) return `${limit.number}h`;
-  if (limit.unit === 6 && limit.number === 1) return "day";
+  if (limit.unit === 6 && limit.number === 1) return "week";
   if (limit.unit === 5 && limit.number === 1) return "month";
   if (limit.type === "TOKENS_LIMIT") return limit.name ?? "tokens";
   return limit.name ?? limit.type.toLowerCase().replace(/_limit$/, "").replace(/_/g, "-");
@@ -144,7 +161,7 @@ function labelForLimit(limit: ZaiLimit): string {
 
 function kindForLimit(limit: ZaiLimit): StandardUsageWindow["kind"] {
   if (limit.unit === 3) return "rolling";
-  if (limit.unit === 6) return "daily";
+  if (limit.unit === 6) return "weekly";
   if (limit.unit === 5) return "monthly";
   if (limit.type === "TOKENS_LIMIT") return "tokens";
   if (limit.type === "RATE_LIMIT" || limit.type === "TIMES_LIMIT") return "requests";

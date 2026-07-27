@@ -7,7 +7,8 @@ The TUI renders only `StandardUsageProvider` objects. Provider-specific code liv
 - `types.ts`: shared standard provider types.
 - `openai.ts`: ChatGPT WHAM usage adapter.
 - `zai.ts`: Z.AI/Zhipu quota adapter.
-- `registry.ts`: active adapter filtering and `Promise.allSettled` refresh orchestration.
+- `deepseek.ts`: DeepSeek account balance adapter.
+- `registry.ts`: active adapter filtering (per-adapter `configKey` gating) and `Promise.allSettled` refresh orchestration.
 
 `src/tui.ts` builds a `ProviderContext`, calls `refreshAllAdapters`, stores normalized providers in Solid signals, and passes those providers to generic formatters.
 
@@ -47,15 +48,31 @@ Credential source determines base URL:
 - `zai-coding-plan`, `zai`, `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` -> `https://api.z.ai`.
 - `zhipu`, `ZHIPU_API_KEY`, `ZHIPUAI_API_KEY` -> `https://open.bigmodel.cn`.
 
+Enterprise (organization) coding plans require both an organization id and a project id (resolved from `zai_organization_id`/`zai_project_id` config, with `ZHIPU_ORGANIZATION_ID`/`ZHIPU_PROJECT_ID` env fallback). When both are present the request becomes `GET {baseUrl}/api/monitor/usage/quota/limit?type=2` with additional `Bigmodel-Organization` and `Bigmodel-Project` headers. Otherwise the personal plan endpoint is used.
+
 Mapping:
 
 - `data.level` -> `plan`.
 - Every `data.limits[]` entry -> one `StandardUsageWindow`.
 - `unit=3, number=5` -> rolling `5h`.
-- `unit=6, number=1` -> daily `day`.
+- `unit=6, number=1` -> weekly `week`.
 - `unit=5, number=1` -> monthly `month`.
 - `usageDetails[].modelCode` -> `modelBreakdown[].label`.
 - Unknown units fall back to normalized type/name labels and `kind="unknown"`.
+
+## 4b. DeepSeek mapping
+
+DeepSeek uses `GET https://api.deepseek.com/user/balance` with `Authorization: Bearer <token>`.
+
+Credential source: `auth.json["deepseek"]` entry, then `DEEPSEEK_API_KEY` env.
+
+Mapping:
+
+- `balance_infos[]` filtered to the `CNY` entry (first entry as fallback).
+- `total_balance` -> a single `StandardUsageWindow` with `kind="credits"`, `currentValue=<total>`, `unitLabel=<currency>`, rendered as a currency value (`formatCurrency`).
+- `granted_balance` and `topped_up_balance` -> sanitized `additionalProperties` (`deepseekGrantedAmount`, `deepseekToppedAmount`), surfaced as `granted` / `topped-up` detail metrics.
+- `is_available` -> status text when false.
+- The credits/cost window kind is formatted via `formatMoneyWindow` (currency), bypassing the token/used-limit path.
 
 ## 5. Main window selection algorithm
 
@@ -115,12 +132,17 @@ Defaults:
 - `request_timeout_ms: 15000`
 - `show_openai: true`
 - `show_zai: true`
+- `zai_organization_id: ""`
+- `zai_project_id: ""`
+- `show_deepseek: true`
 - `show_details: true`
 - `width: 34`
 - `symbols: "unicode"`
 - `max_detail_lines: 4`
 - `max_windows: 3`
 - `max_model_lines: 1`
+
+Each adapter declares an optional `configKey` (e.g. `show_deepseek`); the registry skips an adapter when its `configKey` resolves to a falsy value. Adding a provider only requires a new adapter file plus a `configKey` toggle.
 
 `usage-monitor.json` is watched with a debounced reload. No-op reloads are skipped via config fingerprinting. Collapsed/expanded UI state is not reset on config reload.
 

@@ -1,19 +1,23 @@
 import type { ProviderContext, StandardUsageProvider, UsageMonitorConfig, UsageProviderAdapter } from "./types.js";
 import { openAIUsageAdapter } from "./openai.js";
 import { zaiUsageAdapter } from "./zai.js";
+import { deepseekUsageAdapter } from "./deepseek.js";
 import { sanitizeError } from "../sanitize.js";
 
-export const PROVIDER_ADAPTERS: UsageProviderAdapter[] = [openAIUsageAdapter, zaiUsageAdapter];
+export const PROVIDER_ADAPTERS: UsageProviderAdapter[] = [openAIUsageAdapter, zaiUsageAdapter, deepseekUsageAdapter];
 
 export function getActiveAdapters(
   ctx: ProviderContext,
   config: Required<UsageMonitorConfig>,
 ): UsageProviderAdapter[] {
   return PROVIDER_ADAPTERS.filter((adapter) => {
-    if (adapter.id === "openai" && !config.show_openai) return false;
-    if (adapter.id === "zai" && !config.show_zai) return false;
+    if (adapter.configKey && !isConfigEnabled(config[adapter.configKey])) return false;
     return adapter.isAvailable(ctx);
   });
+}
+
+function isConfigEnabled(value: unknown): boolean {
+  return typeof value === "boolean" ? value : true;
 }
 
 export async function refreshAllAdapters(

@@ -1,6 +1,6 @@
 # opencode-usage-monitor
 
-> OpenCode TUI sidebar plugin that shows OpenAI and Z.AI / GLM quota usage without exposing provider credentials in the UI.
+> OpenCode TUI sidebar plugin that shows OpenAI, Z.AI / GLM, and DeepSeek quota/balance usage without exposing provider credentials in the UI.
 
 [![Package](https://img.shields.io/badge/npm-opencode--usage--monitor-111827?style=for-the-badge&labelColor=111827&color=5b5ef4)](https://www.npmjs.com/package/opencode-usage-monitor)
 ![Runtime](https://img.shields.io/badge/runtime-Bun-111827?style=for-the-badge&logo=bun&logoColor=5b5ef4)
@@ -29,7 +29,8 @@ The plugin renders inside the OpenCode terminal UI sidebar.
 ## Summary
 
 - Displays OpenAI ChatGPT usage windows such as 5h/week with reset timing and optional plan or credits details.
-- Displays Z.AI and GLM 5h/day/month quota windows with reset timing and optional plan details.
+- Displays Z.AI and GLM 5h/week/month quota windows with reset timing and optional plan details. Supports enterprise/org coding plans via organization and project scoping.
+- Displays DeepSeek account balance (CNY) with an optional granted/topped-up breakdown.
 - Discovers credentials from OpenCode auth storage and supported environment variables.
 - Redacts secrets from error messages before rendering them in the TUI.
 - Uses stale-data indicators and guarded refreshes to avoid overlapping API calls.
@@ -101,7 +102,8 @@ Smallest useful configuration:
 {
   "enabled": true,
   "show_openai": true,
-  "show_zai": true
+  "show_zai": true,
+  "show_deepseek": true
 }
 ```
 
@@ -117,6 +119,9 @@ Full documented shape:
   "request_timeout_ms": 15000,
   "show_openai": true,
   "show_zai": true,
+  "zai_organization_id": "",
+  "zai_project_id": "",
+  "show_deepseek": true,
   "show_details": true,
   "width": 34,
   "symbols": "unicode",
@@ -126,6 +131,8 @@ Full documented shape:
   "refresh_keybind": "<leader>q"
 }
 ```
+
+The `show_openai`, `show_zai`, and `show_deepseek` flags control provider activation, not only visual rendering. Setting a flag to `false` prevents the plugin from discovering credentials or making network requests for that provider.
 
 Alternatively, add a `usage_monitor` section to `oh-my-openagent.json`. Dedicated `usage-monitor.json` values take precedence.
 
@@ -152,6 +159,36 @@ export ZHIPU_API_KEY="your-zhipu-key"
 export ZHIPUAI_API_KEY="your-zhipuai-key"
 ```
 
+#### Enterprise / organization coding plan
+
+Enterprise (organization-scoped) GLM coding plans require both an organization id and a project id. When both are provided the plugin queries `{baseUrl}/api/monitor/usage/quota/limit?type=2` with `Bigmodel-Organization` and `Bigmodel-Project` headers; otherwise it uses the personal plan endpoint.
+
+Configure them in `usage-monitor.json`:
+
+```json
+{
+  "zai_organization_id": "your-org-id",
+  "zai_project_id": "your-project-id"
+}
+```
+
+Or via environment variables (config values take precedence):
+
+```sh
+export ZHIPU_ORGANIZATION_ID="your-org-id"
+export ZHIPU_PROJECT_ID="your-project-id"
+```
+
+### DeepSeek
+
+The plugin displays the DeepSeek account balance (CNY) from the balance endpoint. Configure an API key via OpenCode auth storage or:
+
+```sh
+export DEEPSEEK_API_KEY="your-deepseek-key"
+```
+
+The balance row shows the total CNY amount; expanding the provider reveals the granted (promotional) and topped-up (paid) breakdown.
+
 ## Usage
 
 - Click the main usage header to collapse or expand the full panel.
@@ -173,7 +210,7 @@ export ZHIPUAI_API_KEY="your-zhipuai-key"
 │   ├── index.ts               # OpenCode plugin entry
 │   ├── sanitize.ts            # Secret redaction helpers
 │   ├── tui.ts                 # TUI plugin module
-│   ├── providers/             # OpenAI and Z.AI provider clients
+│   ├── providers/             # OpenAI, Z.AI / GLM, and DeepSeek provider clients
 │   └── views/                 # TUI view rendering helpers
 ├── package.json               # Package metadata, scripts, peer dependencies
 ├── tsconfig.json              # Strict TypeScript config
@@ -184,6 +221,8 @@ export ZHIPUAI_API_KEY="your-zhipuai-key"
 
 - If OpenAI shows `needs admin key`, set `OPENAI_ADMIN_KEY` with an organization admin key.
 - If Z.AI shows `auth missing`, configure a supported Z.AI or Zhipu environment variable or OpenCode auth entry.
+- If Z.AI shows `partial` on an enterprise/org account, set `zai_organization_id` and `zai_project_id` (or `ZHIPU_ORGANIZATION_ID` / `ZHIPU_PROJECT_ID`) so the `?type=2` endpoint is used.
+- If DeepSeek shows `auth missing`, set `DEEPSEEK_API_KEY` or add an OpenCode `auth.json` deepseek entry.
 - If the panel is too wide or narrow, adjust `width` in `usage-monitor.json`.
 - If refreshes appear stale, lower `refresh_ms` or check provider API connectivity.
 - If build output is missing, run `bun run build:all` and verify `dist/index.js` and `dist/tui.js` exist.
@@ -193,7 +232,7 @@ export ZHIPUAI_API_KEY="your-zhipuai-key"
 
 - The plugin reads local OpenCode auth metadata and supported environment variables, but examples in this README use placeholders only.
 - Secrets are redacted from rendered error messages before they reach the TUI.
-- Provider data depends on external OpenAI, Z.AI, and Zhipu API availability and credential permissions.
+- Provider data depends on external OpenAI, Z.AI, Zhipu, and DeepSeek API availability and credential permissions.
 - The package is a host extension; runtime behavior depends on compatible OpenCode and OpenTUI APIs.
 
 ## Status

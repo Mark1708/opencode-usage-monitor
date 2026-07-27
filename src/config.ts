@@ -12,6 +12,7 @@ export const CONFIG_DEFAULTS: Required<UsageMonitorConfig> = {
   request_timeout_ms: 15_000,
   show_openai: true,
   show_zai: true,
+  show_deepseek: true,
   show_details: false,
   default_provider_collapsed: true,
   debug: false,
@@ -21,6 +22,8 @@ export const CONFIG_DEFAULTS: Required<UsageMonitorConfig> = {
   max_windows: 3,
   max_model_lines: 1,
   refresh_keybind: "<leader>q",
+  zai_organization_id: "",
+  zai_project_id: "",
 };
 
 export function mergeUsageConfig(partial: UsageMonitorConfig): Required<UsageMonitorConfig> {
@@ -50,8 +53,9 @@ export async function readUsageConfig(): Promise<UsageMonitorConfig> {
 }
 
 export function parseUsageConfig(raw: Record<string, unknown>): UsageMonitorConfig {
-  const { enabled, default_collapsed, refresh_ms, request_timeout_ms, show_openai, show_zai } = raw;
+  const { enabled, default_collapsed, refresh_ms, request_timeout_ms, show_openai, show_zai, show_deepseek } = raw;
   const { show_details, default_provider_collapsed, debug, width, symbols, max_detail_lines, max_windows, max_model_lines, refresh_keybind } = raw;
+  const { zai_organization_id, zai_project_id } = raw;
   return {
     ...(typeof enabled === "boolean" ? { enabled } : {}),
     ...(typeof default_collapsed === "boolean" ? { default_collapsed } : {}),
@@ -59,6 +63,7 @@ export function parseUsageConfig(raw: Record<string, unknown>): UsageMonitorConf
     ...(typeof request_timeout_ms === "number" ? { request_timeout_ms } : {}),
     ...(typeof show_openai === "boolean" ? { show_openai } : {}),
     ...(typeof show_zai === "boolean" ? { show_zai } : {}),
+    ...(typeof show_deepseek === "boolean" ? { show_deepseek } : {}),
     ...(typeof show_details === "boolean" ? { show_details } : {}),
     ...(typeof default_provider_collapsed === "boolean" ? { default_provider_collapsed } : {}),
     ...(typeof debug === "boolean" ? { debug } : {}),
@@ -68,6 +73,8 @@ export function parseUsageConfig(raw: Record<string, unknown>): UsageMonitorConf
     ...(typeof max_windows === "number" ? { max_windows } : {}),
     ...(typeof max_model_lines === "number" ? { max_model_lines } : {}),
     ...(typeof refresh_keybind === "string" && refresh_keybind.length > 0 ? { refresh_keybind } : {}),
+    ...(typeof zai_organization_id === "string" && zai_organization_id.length > 0 ? { zai_organization_id } : {}),
+    ...(typeof zai_project_id === "string" && zai_project_id.length > 0 ? { zai_project_id } : {}),
   };
 }
 

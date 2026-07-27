@@ -41,6 +41,19 @@ export function discoverOpenAICredential(
   return { message: "auth missing" };
 }
 
+export function discoverDeepseekCredential(
+  auth: Record<string, unknown>,
+  env: Record<string, string | undefined> = process.env,
+): { token: string } | { message: string } {
+  const deepseek = extractToken(asAuthEntry(auth.deepseek));
+  if (deepseek) return { token: deepseek };
+
+  const apiKey = env.DEEPSEEK_API_KEY;
+  if (apiKey) return { token: apiKey };
+
+  return { message: "auth missing" };
+}
+
 type ZaiBaseUrl = "https://api.z.ai" | "https://open.bigmodel.cn";
 
 interface ZaiCredentialSuccess {

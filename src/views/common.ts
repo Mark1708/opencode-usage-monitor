@@ -1,5 +1,5 @@
 import type { StandardUsageProvider, StandardUsageWindow } from "../providers/types.js";
-import { formatPercent, formatReset, formatTokens } from "../layout.js";
+import { formatCurrency, formatPercent, formatReset, formatTokens } from "../layout.js";
 import { getWindowSeverity } from "../severity.js";
 import type { ProviderUsageView, UsageMetric, UsageTone } from "./types.js";
 
@@ -39,10 +39,15 @@ export function windowMetric(window: StandardUsageWindow, priority: number): Usa
 }
 
 export function windowValue(window: StandardUsageWindow): string {
-  const main = formatPercent(window.percentage) || formatUsedLimit(window) || window.budgetLabel || "n/a";
+  const main = formatPercent(window.percentage) || formatMoneyWindow(window) || formatUsedLimit(window) || window.budgetLabel || "n/a";
   const suffix = [window.resetLabel ?? formatReset(window.resetAt)]
     .filter((part): part is string => part !== undefined && part.length > 0);
   return [main, ...suffix].join(" · ");
+}
+
+function formatMoneyWindow(window: StandardUsageWindow): string | undefined {
+  if (window.kind !== "credits" && window.kind !== "cost") return undefined;
+  return formatCurrency(window.currentValue, window.unitLabel);
 }
 
 export function splitMetricValue(fullValue: string): { main: string; suffix?: string } {
@@ -69,6 +74,13 @@ export function metricSummary(metrics: UsageMetric[], maxCount = 2): string | un
 export function stringMetric(key: string, label: string, value: unknown, priority: number, options: { compact?: boolean; tone?: UsageTone; detailOnly?: boolean } = {}): UsageMetric | undefined {
   const formatted = formatUnknown(value);
   if (formatted === undefined || formatted.length === 0) return undefined;
+  return { key, label, value: formatted, priority, ...options };
+}
+
+export function numberMetric(key: string, label: string, value: unknown, currency: string | undefined, priority: number, options: { compact?: boolean; tone?: UsageTone; detailOnly?: boolean } = {}): UsageMetric | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const formatted = formatCurrency(value, currency);
+  if (formatted === undefined) return undefined;
   return { key, label, value: formatted, priority, ...options };
 }
 

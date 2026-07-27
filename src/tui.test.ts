@@ -6,15 +6,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TuiPluginModule } from "@opencode-ai/plugin/tui";
 
-import { discoverOpenAICredential, discoverZaiCredential, extractToken } from "./auth.js";
+import { discoverDeepseekCredential, discoverOpenAICredential, discoverZaiCredential, extractToken } from "./auth.js";
 import { CACHE_DIR, filterFreshProviders, getCachePath, isProviderFresh, readCache, setCacheDirForTests, staleProviderIds, writeCache } from "./cache.js";
 import { CONFIG_DEFAULTS, mergeUsageConfig, parseUsageConfig } from "./config.js";
 import { compactSummary, formatCollapsedSummary, formatHeader, formatLastOk, formatProviderMetrics, formatProviderMetricsForState, formatProviderTitle } from "./format.js";
 import { formatAge, formatHeaderLine, formatMetricLine, formatPercent, formatProviderStatusLine, formatProviderTitleLine, formatReset, formatStaleSuffix, formatTokens, metricLabelWidth, padLeft, padRight, selectCompactMetrics, toneToSeverity, truncateSmart, truncateTo } from "./layout.js";
+import { deepseekUsageAdapter, normalizeDeepseekBalance } from "./providers/deepseek.js";
 import { openAIUsageAdapter, normalizeWhamUsage } from "./providers/openai.js";
-import { PROVIDER_ADAPTERS, refreshAllAdapters } from "./providers/registry.js";
+import { PROVIDER_ADAPTERS, getActiveAdapters, refreshAllAdapters } from "./providers/registry.js";
 import type { AuthJson, ProviderContext, StandardUsageProvider, UsageProviderAdapter } from "./providers/types.js";
-import { normalizeZaiQuota } from "./providers/zai.js";
+import { normalizeZaiQuota, zaiUsageAdapter } from "./providers/zai.js";
 import { sanitizeError } from "./sanitize.js";
 import { getWindowSeverity, sortWindowsForDisplay } from "./severity.js";
 import usagePlugin, { createRefreshGuard, toggleProviderCollapse } from "./tui.js";
@@ -26,7 +27,7 @@ const originalFetch = globalThis.fetch;
 const originalCacheDir = CACHE_DIR;
 const originalAdapters = [...PROVIDER_ADAPTERS];
 
-type EnvKey = "OPENAI_API_KEY" | "ZAI_API_KEY" | "ZAI_CODING_PLAN_API_KEY" | "ZHIPU_API_KEY" | "ZHIPUAI_API_KEY";
+type EnvKey = "OPENAI_API_KEY" | "ZAI_API_KEY" | "ZAI_CODING_PLAN_API_KEY" | "ZHIPU_API_KEY" | "ZHIPUAI_API_KEY" | "DEEPSEEK_API_KEY" | "ZHIPU_ORGANIZATION_ID" | "ZHIPU_PROJECT_ID";
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -58,15 +59,32 @@ function withEnv<T>(updates: Partial<Record<EnvKey, string | undefined>>, callba
 }
 
 function withoutUsageEnv<T>(callback: () => T): T {
-  return withEnv({ OPENAI_API_KEY: undefined, ZAI_API_KEY: undefined, ZAI_CODING_PLAN_API_KEY: undefined, ZHIPU_API_KEY: undefined, ZHIPUAI_API_KEY: undefined }, callback);
+  return withEnv({ OPENAI_API_KEY: undefined, ZAI_API_KEY: undefined, ZAI_CODING_PLAN_API_KEY: undefined, ZHIPU_API_KEY: undefined, ZHIPUAI_API_KEY: undefined, DEEPSEEK_API_KEY: undefined, ZHIPU_ORGANIZATION_ID: undefined, ZHIPU_PROJECT_ID: undefined }, callback);
 }
 
-function makeCtx(auth: AuthJson = {}, env: Record<string, string | undefined> = {}): ProviderContext {
-  return { auth, env, config: CONFIG_DEFAULTS, timeoutMs: 1000 };
+function makeCtx(auth: AuthJson = {}, env: Record<string, string | undefined> = {}, config = CONFIG_DEFAULTS): ProviderContext {
+  return { auth, env, config, timeoutMs: 1000 };
 }
 
 function mockJsonResponse(body: unknown, status = 200): void {
   globalThis.fetch = ((() => Promise.resolve(new Response(JSON.stringify(body), { status }))) as unknown) as typeof fetch;
+}
+
+function captureRequest(body: unknown): { url: string; headers: Record<string, string> } {
+  const captured = { url: "", headers: {} as Record<string, string> };
+  globalThis.fetch = (((input: RequestInfo | URL, init?: RequestInit) => {
+    captured.url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const headers = init?.headers;
+    if (headers instanceof Headers) {
+      headers.forEach((value, key) => { captured.headers[key] = value; });
+    } else if (Array.isArray(headers)) {
+      for (const [key, value] of headers) captured.headers[key] = value;
+    } else if (headers) {
+      Object.assign(captured.headers, headers);
+    }
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+  }) as unknown) as typeof fetch;
+  return captured;
 }
 
 function zaiFixture(): unknown {
@@ -94,6 +112,15 @@ function openAiFixture(): unknown {
     additional_rate_limits: [{ metered_feature: "codex", rate_limit: { limit_reached: true } }],
     credits: { balance: "0", has_credits: false, approx_local_messages: [1, 2] },
     spend_control: { individual_limit: 1000 },
+  };
+}
+
+function deepseekFixture(): unknown {
+  return {
+    is_available: true,
+    balance_infos: [
+      { currency: "CNY", total_balance: "10.53", granted_balance: "1.23", topped_up_balance: "9.30" },
+    ],
   };
 }
 
@@ -182,7 +209,7 @@ describe("provider normalization", () => {
     expect(provider.status).toBe("ready");
     expect(provider.plan).toBe("max");
     expect(provider.windows).toHaveLength(3);
-    expect(provider.windows.map((window) => window.label)).toEqual(["5h", "day", "month"]);
+    expect(provider.windows.map((window) => window.label)).toEqual(["5h", "week", "month"]);
     expect(provider.modelBreakdown?.[0]).toMatchObject({ label: "glm-5.1", used: 123 });
   });
 });
@@ -210,10 +237,10 @@ describe("vertical usage view spec", () => {
     expect(rendered).not.toContain("$");
   });
 
-  test("3. Z.AI view maps plan/day/5h/month metrics", () => {
+  test("3. Z.AI view maps plan/week/5h/month metrics", () => {
     const rendered = renderedMetrics(normalizeZaiQuota(zaiFixture(), "https://api.z.ai", nowMs()), { ...CONFIG_DEFAULTS, show_details: false });
     expect(rendered).not.toContain("plan");
-    expect(rendered).toContain("day    79%");
+    expect(rendered).toContain("week   79%");
     expect(rendered).toContain("5h     24%");
     expect(rendered).toContain("month  0%");
   });
@@ -226,7 +253,7 @@ describe("vertical usage view spec", () => {
   test("4. Unknown fields in Z.AI limits[] are ignored", () => {
     const provider = normalizeZaiQuota({ data: { level: "max", limits: [{ type: "ODD_LIMIT", unit: 42, number: 9, percentage: 1 }, { type: "TOKENS_LIMIT", unit: 6, number: 1, percentage: 12 }] } }, "https://api.z.ai", nowMs());
     const rendered = renderedMetrics(provider);
-    expect(rendered).toContain("day");
+    expect(rendered).toContain("week");
     expect(rendered).not.toContain("odd");
   });
 
@@ -523,5 +550,169 @@ describe("cache module", () => {
       openai: { id: "openai", displayName: "openai", status: "ready", windows: [], fetchedAt: Date.now() - 10_000 },
     };
     expect(staleProviderIds(cached, ["openai", "zai"], 60_000)).toEqual(["zai"]);
+  });
+});
+
+describe("deepseek balance provider", () => {
+  test("normalizeDeepseekBalance maps CNY total to a credits window", () => {
+    const provider = normalizeDeepseekBalance(deepseekFixture(), nowMs());
+    expect(provider.id).toBe("deepseek");
+    expect(provider.status).toBe("ready");
+    expect(provider.windows).toHaveLength(1);
+    const window = provider.windows[0]!;
+    expect(window.label).toBe("balance");
+    expect(window.kind).toBe("credits");
+    expect(window.currentValue).toBe(10.53);
+    expect(window.unitLabel).toBe("CNY");
+    expect(provider.additionalProperties?.deepseekGrantedAmount).toBe(1.23);
+    expect(provider.additionalProperties?.deepseekToppedAmount).toBe(9.30);
+  });
+
+  test("view shows balance in main line and granted/topped-up in details", () => {
+    const provider = normalizeDeepseekBalance(deepseekFixture(), nowMs());
+    const collapsed = renderedMetrics(provider, { ...CONFIG_DEFAULTS, show_details: false });
+    expect(collapsed).toContain("balance");
+    expect(collapsed).toContain("\u00a510.53");
+    expect(collapsed).not.toContain("granted");
+    expect(collapsed).not.toContain("topped-up");
+
+    const expanded = renderedMetrics(provider, { ...CONFIG_DEFAULTS, show_details: true });
+    expect(expanded).toContain("granted");
+    expect(expanded).toContain("\u00a51.23");
+    expect(expanded).toContain("topped-up");
+    expect(expanded).toContain("\u00a59.30");
+  });
+
+  test("unavailable DeepSeek access stays visible without losing balance data", () => {
+    const fixture = { ...(deepseekFixture() as Record<string, unknown>), is_available: false };
+    const provider = normalizeDeepseekBalance(fixture, nowMs());
+    const view = providerToView(provider);
+
+    expect(provider.status).toBe("partial");
+    expect(provider.statusText).toBe("API access unavailable");
+    expect(provider.windows[0]?.currentValue).toBe(10.53);
+    expect(view.status).toBe("partial");
+    expect(view.summary).toContain("API access unavailable");
+    expect(view.metrics.some((metric) => metric.label === "balance")).toBe(true);
+  });
+
+  test("adapter reports missing auth without a credential", async () => {
+    await withoutUsageEnv(async () => {
+      const provider = await deepseekUsageAdapter.fetchUsage(makeCtx({}, {}), new AbortController().signal);
+      expect(provider.status).toBe("missing-auth");
+    });
+  });
+
+  test("adapter fetches balance with Bearer token", async () => {
+    const captured = captureRequest(deepseekFixture());
+    const provider = await deepseekUsageAdapter.fetchUsage(makeCtx({}, { DEEPSEEK_API_KEY: "ds-key" }), new AbortController().signal);
+    expect(captured.url).toBe("https://api.deepseek.com/user/balance");
+    expect(captured.headers.Authorization).toBe("Bearer ds-key");
+    expect(provider.status).toBe("ready");
+  });
+});
+
+describe("glm enterprise quota", () => {
+  test("uses ?type=2 and Bigmodel headers when org+project configured via config", async () => {
+    const captured = captureRequest(zaiFixture());
+    const ctx = makeCtx({ zhipu: { token: "zp" } }, {}, { ...CONFIG_DEFAULTS, zai_organization_id: "org-1", zai_project_id: "proj-1" });
+    await zaiUsageAdapter.fetchUsage(ctx, new AbortController().signal);
+    expect(captured.url).toBe("https://open.bigmodel.cn/api/monitor/usage/quota/limit?type=2");
+    expect(captured.headers.Authorization).toBe("zp");
+    expect(captured.headers["Bigmodel-Organization"]).toBe("org-1");
+    expect(captured.headers["Bigmodel-Project"]).toBe("proj-1");
+  });
+
+  test("uses ?type=2 when org+project provided via env", async () => {
+    const captured = captureRequest(zaiFixture());
+    const ctx = makeCtx({ zhipu: { token: "zp" } }, { ZHIPU_ORGANIZATION_ID: "env-org", ZHIPU_PROJECT_ID: "env-proj" });
+    await zaiUsageAdapter.fetchUsage(ctx, new AbortController().signal);
+    expect(captured.url).toContain("?type=2");
+    expect(captured.headers["Bigmodel-Organization"]).toBe("env-org");
+    expect(captured.headers["Bigmodel-Project"]).toBe("env-proj");
+  });
+
+  test("config organization overrides env", async () => {
+    const captured = captureRequest(zaiFixture());
+    const ctx = makeCtx({ zhipu: { token: "zp" } }, { ZHIPU_ORGANIZATION_ID: "env-org", ZHIPU_PROJECT_ID: "env-proj" }, { ...CONFIG_DEFAULTS, zai_organization_id: "cfg-org", zai_project_id: "cfg-proj" });
+    await zaiUsageAdapter.fetchUsage(ctx, new AbortController().signal);
+    expect(captured.headers["Bigmodel-Organization"]).toBe("cfg-org");
+    expect(captured.headers["Bigmodel-Project"]).toBe("cfg-proj");
+  });
+
+  test("omits ?type=2 and Bigmodel headers when org/project absent", async () => {
+    const captured = captureRequest(zaiFixture());
+    const ctx = makeCtx({ zhipu: { token: "zp" } });
+    await zaiUsageAdapter.fetchUsage(ctx, new AbortController().signal);
+    expect(captured.url).toBe("https://open.bigmodel.cn/api/monitor/usage/quota/limit");
+    expect(captured.headers.Authorization).toBe("zp");
+    expect(captured.headers["Bigmodel-Organization"]).toBeUndefined();
+    expect(captured.headers["Bigmodel-Project"]).toBeUndefined();
+  });
+
+  test("omits ?type=2 when only organization is set", async () => {
+    const captured = captureRequest(zaiFixture());
+    const ctx = makeCtx({ zhipu: { token: "zp" } }, {}, { ...CONFIG_DEFAULTS, zai_organization_id: "org-1" });
+    await zaiUsageAdapter.fetchUsage(ctx, new AbortController().signal);
+    expect(captured.url).not.toContain("?type=2");
+    expect(captured.headers["Bigmodel-Organization"]).toBeUndefined();
+  });
+});
+
+describe("registry config gating", () => {
+  test("disabled providers are skipped before fetchUsage", async () => {
+    let fetchCount = 0;
+    const adapter: UsageProviderAdapter = {
+      id: "deepseek",
+      displayName: "deepseek",
+      configKey: "show_deepseek",
+      isAvailable: () => true,
+      fetchUsage: async () => {
+        fetchCount += 1;
+        return { id: "deepseek", displayName: "deepseek", status: "ready", windows: [] };
+      },
+    };
+    PROVIDER_ADAPTERS.splice(0, PROVIDER_ADAPTERS.length, adapter);
+
+    const result = await refreshAllAdapters(
+      makeCtx(),
+      { ...CONFIG_DEFAULTS, show_deepseek: false },
+      new AbortController().signal,
+    );
+
+    expect(fetchCount).toBe(0);
+    expect(result).toEqual({});
+  });
+
+  test("show_deepseek=false hides deepseek adapter", () => {
+    const ctx = makeCtx({}, { DEEPSEEK_API_KEY: "k", ZHIPU_API_KEY: "k2" });
+    const active = getActiveAdapters(ctx, { ...CONFIG_DEFAULTS, show_deepseek: false });
+    expect(active.map((adapter) => adapter.id)).not.toContain("deepseek");
+  });
+
+  test("show_deepseek=true keeps deepseek adapter", () => {
+    const ctx = makeCtx({}, { DEEPSEEK_API_KEY: "k" });
+    const active = getActiveAdapters(ctx, { ...CONFIG_DEFAULTS, show_deepseek: true });
+    expect(active.map((adapter) => adapter.id)).toContain("deepseek");
+  });
+
+  test("existing show_openai/show_zai gating still works", () => {
+    const ctx = makeCtx({}, { OPENAI_API_KEY: "k", ZHIPU_API_KEY: "k2" });
+    const hidden = getActiveAdapters(ctx, { ...CONFIG_DEFAULTS, show_openai: false, show_zai: false });
+    expect(hidden.map((adapter) => adapter.id)).not.toContain("openai");
+    expect(hidden.map((adapter) => adapter.id)).not.toContain("zai");
+    const shown = getActiveAdapters(ctx, { ...CONFIG_DEFAULTS });
+    expect(shown.map((adapter) => adapter.id)).toContain("openai");
+    expect(shown.map((adapter) => adapter.id)).toContain("zai");
+  });
+});
+
+describe("deepseek auth discovery", () => {
+  test("prefers auth entry then env", () => {
+    withoutUsageEnv(() => {
+      expect(discoverDeepseekCredential({ deepseek: { key: "auth-ds" } }, { DEEPSEEK_API_KEY: "env" })).toEqual({ token: "auth-ds" });
+      expect(discoverDeepseekCredential({}, { DEEPSEEK_API_KEY: "env" })).toEqual({ token: "env" });
+      expect(discoverDeepseekCredential({}, {})).toEqual({ message: "auth missing" });
+    });
   });
 });

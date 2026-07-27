@@ -31,12 +31,12 @@ export function zaiProviderToView(provider: StandardUsageProvider): ProviderUsag
 }
 
 function priorityForWindow(label: string): number {
-  if (label === "day") return 90;
+  if (label === "week") return 90;
   if (label === "5h") return 80;
   if (label === "month") return 70;
   return 50;
 }
 
 function isKnownWindow(label: string): boolean {
-  return label === "day" || label === "5h" || label === "month";
+  return label === "week" || label === "5h" || label === "month";
 }

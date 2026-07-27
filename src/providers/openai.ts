@@ -26,6 +26,7 @@ type ParsedWhamUsage = {
 export const openAIUsageAdapter: UsageProviderAdapter = {
   id: "openai",
   displayName: "openai",
+  configKey: "show_openai",
   isAvailable: () => true,
   fetchUsage: fetchOpenAIUsage,
 };

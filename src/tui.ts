@@ -155,7 +155,7 @@ function buildHeaderRight(providers: Record<ProviderId, StandardUsageProvider>):
 }
 
 function orderedProviders(providers: Record<ProviderId, StandardUsageProvider>): StandardUsageProvider[] {
-  const preferred = ["openai", "zai"];
+  const preferred = ["openai", "zai", "deepseek"];
   return Object.values(providers).sort((left, right) => {
     const leftIndex = preferred.indexOf(left.id);
     const rightIndex = preferred.indexOf(right.id);
@@ -189,6 +189,9 @@ function envSubset(): Record<string, string | undefined> {
     ZAI_CODING_PLAN_API_KEY: process.env.ZAI_CODING_PLAN_API_KEY,
     ZHIPU_API_KEY: process.env.ZHIPU_API_KEY,
     ZHIPUAI_API_KEY: process.env.ZHIPUAI_API_KEY,
+    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+    ZHIPU_ORGANIZATION_ID: process.env.ZHIPU_ORGANIZATION_ID,
+    ZHIPU_PROJECT_ID: process.env.ZHIPU_PROJECT_ID,
   };
 }
 

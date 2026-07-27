@@ -4,7 +4,7 @@
 
 ## OVERVIEW
 
-Read-only API usage quota display for OpenAI and Z.AI (GLM) providers. Fetches usage data, caches with TTL, renders in sidebar.
+Read-only API usage quota/balance display for OpenAI, Z.AI (GLM), and DeepSeek providers. Fetches usage data, caches with TTL, renders in sidebar.
 
 ## STRUCTURE
 
@@ -22,16 +22,18 @@ usage-monitor/
 │   ├── severity.ts       # Severity color mapping
 │   ├── providers/
 │   │   ├── types.ts      # Core types: StandardUsageProvider, ProviderContext, UsageMonitorConfig
-│   │   ├── registry.ts   # Adapter discovery + refresh orchestration
+│   │   ├── registry.ts   # Adapter discovery (per-adapter configKey gating) + refresh orchestration
 │   │   ├── shared.ts     # AbortController timeout helpers
 │   │   ├── openai.ts     # OpenAI /dashboard/billing/usage adapter
-│   │   └── zai.ts        # Z.AI (GLM) /api context adapter
+│   │   ├── zai.ts        # Z.AI (GLM) /api quota adapter (personal + enterprise ?type=2)
+│   │   └── deepseek.ts   # DeepSeek account balance adapter
 │   └── views/
 │       ├── types.ts      # View types: ProviderUsageView, UsageMetric
 │       ├── index.ts      # providerToView() -- adapter output to view model
-│       ├── common.ts     # Shared view formatting helpers
+│       ├── common.ts     # Shared view formatting helpers (windowMetric, numberMetric, currency)
 │       ├── openai-view.ts # OpenAI-specific view formatting
-│       └── zai-view.ts   # Z.AI-specific view formatting
+│       ├── zai-view.ts   # Z.AI-specific view formatting
+│       └── deepseek-view.ts # DeepSeek-specific view formatting (balance + breakdown)
 ├── assets/               # Screenshots for README
 ├── .gitlab-ci.yml        # CI: validate -> build -> publish
 └── package.json
@@ -50,7 +52,7 @@ usage-monitor/
 
 ## CONVENTIONS (THIS REPO)
 
-- **Provider adapter pattern**: Each provider implements `UsageProviderAdapter` interface with `id`, `displayName`, `isAvailable()`, `fetchUsage()`
+- **Provider adapter pattern**: Each provider implements `UsageProviderAdapter` interface with `id`, `displayName`, optional `configKey` (e.g. `show_deepseek`), `isAvailable()`, `fetchUsage()`. Register new adapters in `registry.ts`.
 - **View separation**: Providers output `StandardUsageProvider`; views transform to `ProviderUsageView` for display
 - **Config fallback chain**: `usage-monitor.json` -> `oh-my-openagent.json` (usage_monitor key) -> defaults
 - **Auth discovery**: Scans `~/.config/opencode/auth.json` entries, matches by field names (apiKey, token, etc.)
