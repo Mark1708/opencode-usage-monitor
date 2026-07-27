@@ -2,10 +2,45 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { discoverDeepseekCredential, discoverOpenAICredential, discoverZaiCredential, extractToken } from "../auth.js";
+import {
+  discoverDeepseekCredential,
+  discoverOpenAICredential,
+  discoverZaiCredential,
+  extractToken,
+  parseAuthJson,
+} from "../auth.js";
 import { withoutUsageEnv } from "./_helpers.js";
 
 describe("auth discovery", () => {
+  test.each(["null", "[]", "\"auth\""])("rejects a non-object auth JSON top level", (text) => {
+    expect(parseAuthJson(text, "/virtual/auth.json")).toEqual({
+      kind: "invalid",
+      path: "/virtual/auth.json",
+      error: "OpenCode auth file is invalid",
+    });
+  });
+
+  test("sanitizes auth entries to allowed correctly typed fields", () => {
+    const state = parseAuthJson(JSON.stringify({
+      deepseek: {
+        key: "legacy-key",
+        token: 42,
+        expires: "tomorrow",
+        accountId: "account-1",
+        unknown: "remove-me",
+      },
+      invalid: "not-an-entry",
+    }), "/virtual/auth.json");
+
+    expect(state).toEqual({
+      kind: "loaded",
+      path: "/virtual/auth.json",
+      auth: { deepseek: { key: "legacy-key", accountId: "account-1" } },
+    });
+    if (state.kind !== "loaded") return;
+    expect(discoverDeepseekCredential(state.auth, {})).toEqual({ token: "legacy-key" });
+  });
+
   test("extractToken reads supported token field names", () => {
     expect(extractToken({ key: "a" })).toBe("a");
     expect(extractToken({ apiKey: "b" })).toBe("b");

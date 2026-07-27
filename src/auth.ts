@@ -3,11 +3,10 @@ import type { AuthEntry, AuthJson, AuthState } from "./providers/types.js";
 
 const HOME = homedir() ?? "";
 const AUTH_PATH = `${HOME}/.local/share/opencode/auth.json`;
-
-function shortError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.split("\n")[0] ?? "Invalid JSON";
-}
+const AUTH_STRING_FIELDS = [
+  "type", "key", "apiKey", "api_key", "token", "accessToken", "auth_token",
+  "access", "refresh", "accountId",
+] as const;
 
 export function extractToken(entry: AuthEntry | undefined): string | undefined {
   if (!entry) return undefined;
@@ -18,11 +17,27 @@ export async function readAuthFile(): Promise<AuthState> {
   const file = Bun.file(AUTH_PATH);
   if (!(await file.exists())) return { kind: "missing", path: AUTH_PATH };
   try {
-    const parsed = JSON.parse(await file.text()) as AuthJson;
-    return { kind: "loaded", path: AUTH_PATH, auth: parsed };
-  } catch (error: unknown) {
-    return { kind: "invalid", path: AUTH_PATH, error: shortError(error) };
+    return parseAuthJson(await file.text(), AUTH_PATH);
+  } catch (_error: unknown) {
+    return invalidAuthState(AUTH_PATH);
   }
+}
+
+export function parseAuthJson(text: string, path: string): AuthState {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!isPlainObject(parsed)) return invalidAuthState(path);
+    return { kind: "loaded", path, auth: sanitizeAuthJson(parsed) };
+  } catch (_error: unknown) {
+    return invalidAuthState(path);
+  }
+}
+
+export async function readOpenCodeEntry(entry: string): Promise<string | undefined> {
+  const state = await readAuthFile();
+  if (state.kind === "missing") return undefined;
+  if (state.kind === "invalid") throw new Error("OpenCode auth file is invalid");
+  return extractToken(asAuthEntry(state.auth[entry]));
 }
 
 export function discoverOpenAICredential(
@@ -88,6 +103,34 @@ export function discoverZaiCredential(auth: Record<string, unknown>, env: Record
   return { message: "auth missing" };
 }
 
+function sanitizeAuthJson(value: Record<string, unknown>): AuthJson {
+  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
+    const sanitized = sanitizeAuthEntry(entry);
+    return sanitized ? [[key, sanitized]] : [];
+  }));
+}
+
+function sanitizeAuthEntry(value: unknown): AuthEntry | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const strings = AUTH_STRING_FIELDS.flatMap((field) => (
+    typeof value[field] === "string" ? [[field, value[field]]] : []
+  ));
+  const expires = typeof value.expires === "number" && Number.isFinite(value.expires)
+    ? [["expires", value.expires]]
+    : [];
+  return Object.fromEntries([...strings, ...expires]);
+}
+
 function asAuthEntry(value: unknown): AuthEntry | undefined {
-  return value && typeof value === "object" ? value as AuthEntry : undefined;
+  return sanitizeAuthEntry(value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function invalidAuthState(path: string): AuthState {
+  return { kind: "invalid", path, error: "OpenCode auth file is invalid" };
 }
