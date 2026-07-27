@@ -1,11 +1,30 @@
-import type { ProviderContext, StandardModelBreakdown, StandardUsageProvider, StandardUsageWindow, UsageProviderAdapter } from "./types.js";
 import { discoverZaiCredential } from "../auth.js";
-import { sanitizeAdditionalProperties, sanitizeError } from "../sanitize.js";
+import { hasSecretPattern, sanitizeAdditionalProperties, sanitizeCredentialError } from "../sanitize.js";
 import { getWindowSeverity } from "../severity.js";
+import { zaiProviderToView } from "../views/zai-view.js";
+import {
+  defineProvider,
+  LegacyAdapterFacade,
+  type LegacyProviderBridge,
+  type ProviderFetchContext,
+  type ValidationIssue,
+  type ValidationResult,
+} from "./contracts.js";
 import { asRecord, createStatusProvider, createTimeoutController, normalizeEpochMs, readNumber, readString, slug } from "./shared.js";
+import type { ProviderContext, StandardModelBreakdown, StandardUsageProvider, StandardUsageWindow } from "./types.js";
 
 const QUOTA_PATH = "/api/monitor/usage/quota/limit";
+const ZAI_BASE_URL = "https://api.z.ai";
+const ZHIPU_BASE_URL = "https://open.bigmodel.cn";
 const statusProvider = createStatusProvider("zai", "z.ai");
+const ENTERPRISE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]*$/;
+export const ZAI_ENTERPRISE_ID_MAX_LENGTH = 128;
+
+export type ZaiOptions = Readonly<{
+  plan: "personal" | "enterprise";
+  organizationId?: string;
+  projectId?: string;
+}>;
 
 type ZaiLimit = {
   id: string;
@@ -22,48 +41,220 @@ type ZaiLimit = {
   usageDetails?: StandardModelBreakdown[];
 };
 
-export const zaiUsageAdapter: UsageProviderAdapter = {
-  id: "zai",
-  displayName: "z.ai",
+export const zaiProviderDefinition = defineProvider<ZaiOptions>({
+  metadata: {
+    id: "zai",
+    displayName: "z.ai",
+    catalogOrder: 20,
+    officialApi: {
+      baseUrls: [ZAI_BASE_URL, ZHIPU_BASE_URL],
+      documentationUrl: "https://docs.z.ai/guides/overview/usage",
+      endpoints: [
+        { method: "GET", path: QUOTA_PATH },
+        { method: "GET", path: `${QUOTA_PATH}?type=2` },
+      ],
+    },
+  },
+  credentialPolicy: {
+    allowedSources: ["opencode", "env"],
+    defaultCandidates: [
+      { source: "opencode", variant: "zai", name: "zai-coding-plan" },
+      { source: "opencode", variant: "zai", name: "zai" },
+      { source: "opencode", variant: "zhipu", name: "zhipu" },
+      { source: "env", variant: "zai", name: "ZAI_API_KEY" },
+      { source: "env", variant: "zai", name: "ZAI_CODING_PLAN_API_KEY" },
+      { source: "env", variant: "zhipu", name: "ZHIPU_API_KEY" },
+      { source: "env", variant: "zhipu", name: "ZHIPUAI_API_KEY" },
+    ],
+  },
+  parseOptions: parseZaiOptions,
+  fetchUsage: fetchZaiUsage,
+  present: zaiProviderToView,
+  resolveCacheScopeMetadata: ({ options, metadata }) => {
+    if (options.plan !== "enterprise" || !options.organizationId || !options.projectId) return null;
+    const credentialVariant = metadata.readAccountIdentifier("credential_variant");
+    if (!isZaiCredentialVariant(credentialVariant)) return null;
+    return {
+      accountId: JSON.stringify([options.organizationId, options.projectId]),
+      credentialVariant,
+      dataShape: { plan: "enterprise" },
+    };
+  },
+});
+
+const zaiLegacyBridge: LegacyProviderBridge = {
   configKey: "show_zai",
   isAvailable: () => true,
-  fetchUsage: fetchZaiUsage,
+  resolve: resolveLegacyZaiContext,
 };
 
-async function fetchZaiUsage(ctx: ProviderContext, signal: AbortSignal): Promise<StandardUsageProvider> {
-  const credential = discoverZaiCredential(ctx.auth, ctx.env);
-  if (!("token" in credential)) return statusProvider("missing-auth", credential.message);
+export const zaiUsageAdapter = new LegacyAdapterFacade(
+  zaiProviderDefinition.registration,
+  zaiLegacyBridge,
+);
 
-  const organizationId = resolveSetting(ctx.config.zai_organization_id, ctx.env.ZHIPU_ORGANIZATION_ID);
-  const projectId = resolveSetting(ctx.config.zai_project_id, ctx.env.ZHIPU_PROJECT_ID);
-  const enterprise = organizationId !== undefined && projectId !== undefined;
-  const path = enterprise ? `${QUOTA_PATH}?type=2` : QUOTA_PATH;
-  const headers: Record<string, string> = { Authorization: credential.token, Accept: "application/json" };
-  if (enterprise) {
-    headers["Bigmodel-Organization"] = organizationId;
-    headers["Bigmodel-Project"] = projectId;
+async function fetchZaiUsage(context: ProviderFetchContext<ZaiOptions>): Promise<StandardUsageProvider> {
+  if (context.signal.aborted) return statusProvider("error", "cancelled");
+  if (!isZaiCredentialVariant(context.credential.variant)) {
+    return statusProvider("error", "invalid credential variant");
   }
+  const baseUrl = context.credential.variant === "zhipu" ? ZHIPU_BASE_URL : ZAI_BASE_URL;
+  const path = context.options.plan === "enterprise" ? `${QUOTA_PATH}?type=2` : QUOTA_PATH;
+  const headers = createZaiHeaders(context);
 
-  const controller = createTimeoutController(ctx.timeoutMs, signal);
+  const controller = createTimeoutController(context.timeoutMs, context.signal);
   try {
-    const response = await fetch(`${credential.baseUrl}${path}`, {
+    const response = await fetch(`${baseUrl}${path}`, {
       headers,
       signal: controller.signal,
     });
     if (response.status === 401 || response.status === 403) return statusProvider("forbidden", "forbidden");
     if (!response.ok) return statusProvider("error", `api ${response.status}`);
-    return normalizeZaiQuota(await response.json(), credential.baseUrl);
+    return normalizeZaiQuota(await response.json(), baseUrl);
   } catch (error: unknown) {
-    return statusProvider("error", controller.signal.aborted ? "timeout" : sanitizeError(error));
+    const message = context.signal.aborted
+      ? "cancelled"
+      : controller.signal.aborted
+        ? "timeout"
+        : sanitizeCredentialError(error, context.credential.secret);
+    return statusProvider("error", message);
   } finally {
     controller.dispose();
   }
+}
+
+function createZaiHeaders(context: ProviderFetchContext<ZaiOptions>): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: context.credential.secret,
+    Accept: "application/json",
+  };
+  if (context.options.plan !== "enterprise") return headers;
+  return {
+    ...headers,
+    "Bigmodel-Organization": context.options.organizationId ?? "",
+    "Bigmodel-Project": context.options.projectId ?? "",
+  };
+}
+
+function resolveLegacyZaiContext(context: ProviderContext, signal: AbortSignal) {
+  const credential = resolveLegacyZaiCredential(context);
+  if (!credential.ok) return { ok: false as const, status: "missing-auth" as const, message: credential.message };
+  const organizationId = resolveSetting(context.config.zai_organization_id, context.env.ZHIPU_ORGANIZATION_ID);
+  const projectId = resolveSetting(context.config.zai_project_id, context.env.ZHIPU_PROJECT_ID);
+  const enterprise = organizationId !== undefined && projectId !== undefined;
+  return {
+    ok: true as const,
+    options: enterprise
+      ? { plan: "enterprise", organization_id: organizationId, project_id: projectId }
+      : { plan: "personal" },
+    fetchContext: {
+      credential: {
+        secret: credential.secret,
+        source: credential.source,
+        variant: credential.variant,
+        epoch: 0,
+      },
+      signal,
+      timeoutMs: context.timeoutMs,
+    },
+  };
+}
+
+type LegacyZaiCredential =
+  | Readonly<{ ok: true; secret: string; source: "opencode" | "env"; variant: "zai" | "zhipu" }>
+  | Readonly<{ ok: false; message: string }>;
+
+function resolveLegacyZaiCredential(context: ProviderContext): LegacyZaiCredential {
+  const authCredential = discoverZaiCredential(context.auth, {});
+  if ("token" in authCredential) return toLegacyZaiCredential(authCredential, "opencode");
+  const envCredential = discoverZaiCredential({}, context.env);
+  if ("token" in envCredential) return toLegacyZaiCredential(envCredential, "env");
+  return { ok: false, message: envCredential.message };
+}
+
+function toLegacyZaiCredential(
+  credential: Readonly<{ token: string; baseUrl: string }>,
+  source: "opencode" | "env",
+): LegacyZaiCredential {
+  return {
+    ok: true,
+    secret: credential.token,
+    source,
+    variant: credential.baseUrl === ZHIPU_BASE_URL ? "zhipu" : "zai",
+  };
 }
 
 function resolveSetting(configValue: string | undefined, envValue: string | undefined): string | undefined {
   if (typeof configValue === "string" && configValue.length > 0) return configValue;
   if (typeof envValue === "string" && envValue.length > 0) return envValue;
   return undefined;
+}
+
+function parseZaiOptions(input: unknown): ValidationResult<ZaiOptions> {
+  const options = asOptionsObject(input);
+  if (!options) return invalidOptions("options", "options must be an object");
+  const unknownKey = Object.keys(options).find((key) => !["plan", "organization_id", "project_id"].includes(key));
+  if (unknownKey) return invalidOptions(unknownKey, "unknown option");
+  const plan = readOption(options, "plan") ?? "personal";
+  if (plan !== "personal" && plan !== "enterprise") return invalidOptions("plan", "plan must be personal or enterprise");
+  const organization = parseIdentifierOption(options, "organization_id");
+  if (!organization.ok) return organization;
+  const project = parseIdentifierOption(options, "project_id");
+  if (!project.ok) return project;
+  if (plan === "personal" && (organization.present || project.present)) {
+    return invalidOptions("organization_id", "enterprise identifiers require enterprise plan");
+  }
+  const organizationId = organization.value;
+  const projectId = project.value;
+  if (plan === "enterprise" && (!organizationId || !projectId)) {
+    return invalidOptions("organization_id", "enterprise plan requires organization_id and project_id");
+  }
+  return {
+    ok: true,
+    value: { plan, ...(organizationId ? { organizationId } : {}), ...(projectId ? { projectId } : {}) },
+  };
+}
+
+type ParsedIdentifier =
+  | Readonly<{ ok: false; issues: readonly ValidationIssue[] }>
+  | Readonly<{ ok: true; present: boolean; value?: string }>;
+
+function parseIdentifierOption(options: object, key: string): ParsedIdentifier {
+  const present = Object.hasOwn(options, key);
+  if (!present) return { ok: true, present: false };
+  const value = readOption(options, key);
+  if (!isSafeEnterpriseId(value)) {
+    return {
+      ok: false,
+      issues: Object.freeze([{ path: key, message: `${key} must be a non-empty string` }]),
+    };
+  }
+  return { ok: true, present: true, value };
+}
+
+function isSafeEnterpriseId(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= ZAI_ENTERPRISE_ID_MAX_LENGTH
+    && ENTERPRISE_ID_PATTERN.test(value)
+    && !hasSecretPattern(value);
+}
+
+function asOptionsObject(input: unknown): object | undefined {
+  return typeof input === "object" && input !== null && !Array.isArray(input) ? input : undefined;
+}
+
+function readOption(options: object, key: string): unknown {
+  return Reflect.get(options, key);
+}
+
+function isZaiCredentialVariant(value: string | undefined): value is "zai" | "zhipu" {
+  return value === "zai" || value === "zhipu";
+}
+
+function invalidOptions<T>(path: string, message: string): ValidationResult<T> {
+  const issues: readonly ValidationIssue[] = Object.freeze([{ path, message }]);
+  return { ok: false, issues };
 }
 
 export function normalizeZaiQuota(raw: unknown, baseUrl: string = "https://api.z.ai", nowMs: number = Date.now()): StandardUsageProvider {
