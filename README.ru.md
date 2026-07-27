@@ -207,4 +207,5 @@ export ZHIPUAI_API_KEY="your-zhipuai-key"
 - Package: <https://www.npmjs.com/package/opencode-usage-monitor>
 - Repository: <https://github.com/Mark1708/opencode-usage-monitor>
 - Host app: <https://opencode.ai/>
+- Включён в раздел Plugins курируемого каталога [awesome-opencode](https://github.com/awesome-opencode/awesome-opencode).
 - Лицензия: MIT, см. [`LICENSE`](LICENSE)

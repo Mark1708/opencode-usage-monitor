@@ -207,4 +207,5 @@ Actively maintained personal OpenCode tool/plugin. Public issues and improvement
 - Package: <https://www.npmjs.com/package/opencode-usage-monitor>
 - Repository: <https://github.com/Mark1708/opencode-usage-monitor>
 - Host app: <https://opencode.ai/>
+- Listed under Plugins in the curated [awesome-opencode](https://github.com/awesome-opencode/awesome-opencode) directory.
 - License: MIT, see [`LICENSE`](LICENSE)
