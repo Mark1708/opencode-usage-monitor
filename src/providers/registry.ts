@@ -1,14 +1,27 @@
-import type { ProviderContext, StandardUsageProvider, UsageMonitorConfig, UsageProviderAdapter } from "./types.js";
-import { openAIUsageAdapter } from "./openai.js";
-import { zaiUsageAdapter } from "./zai.js";
-import { deepseekUsageAdapter } from "./deepseek.js";
 import { sanitizeError } from "../sanitize.js";
+import { BUILTIN_PROVIDER_CATALOG } from "./builtins.js";
+import type { ProviderRegistration } from "./contracts.js";
+import { deepseekUsageAdapter } from "./deepseek.js";
+import { openAIUsageAdapter } from "./openai.js";
+import type { ProviderContext, StandardUsageProvider, UsageMonitorConfig, UsageProviderAdapter } from "./types.js";
+import { zaiUsageAdapter } from "./zai.js";
 
 export const PROVIDER_ADAPTERS: readonly UsageProviderAdapter[] = Object.freeze([
   openAIUsageAdapter,
   zaiUsageAdapter,
   deepseekUsageAdapter,
 ]);
+
+export function resolveProviderRegistration(
+  catalog: readonly ProviderRegistration[],
+  providerId: string,
+): ProviderRegistration | undefined {
+  return catalog.find((registration) => registration.metadata.id === providerId);
+}
+
+export function resolveBuiltinProviderRegistration(providerId: string): ProviderRegistration | undefined {
+  return resolveProviderRegistration(BUILTIN_PROVIDER_CATALOG, providerId);
+}
 
 export function selectActiveAdapters(
   adapters: readonly UsageProviderAdapter[],
