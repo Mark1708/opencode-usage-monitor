@@ -54,6 +54,20 @@ describe("v2 config parser", () => {
     ]);
   });
 
+  test("rejects syntactically valid references outside a provider candidate allowlist", () => {
+    const env = parseUsageConfigV2({
+      version: 2,
+      providers: { zai: { credential: { source: "env", name: "UNLISTED_API_KEY" } } },
+    });
+    const auth = parseUsageConfigV2({
+      version: 2,
+      providers: { deepseek: { credential: { source: "opencode", entry: "other" } } },
+    });
+
+    expect(env.ok).toBe(false);
+    expect(auth.ok).toBe(false);
+  });
+
   test("orders providers by explicit order, then catalog order, then id", () => {
     const result = parseUsageConfigV2({
       version: 2,

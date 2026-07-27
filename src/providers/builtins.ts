@@ -29,9 +29,13 @@ const zaiDefinition = defineProvider<ZaiOptions>({
   credentialPolicy: {
     allowedSources: ["opencode", "env"],
     defaultCandidates: [
+      { source: "opencode", variant: "zai", name: "zai-coding-plan" },
       { source: "opencode", variant: "zai", name: "zai" },
+      { source: "opencode", variant: "zhipu", name: "zhipu" },
       { source: "env", variant: "zai", name: "ZAI_API_KEY" },
+      { source: "env", variant: "zai", name: "ZAI_CODING_PLAN_API_KEY" },
       { source: "env", variant: "zhipu", name: "ZHIPU_API_KEY" },
+      { source: "env", variant: "zhipu", name: "ZHIPUAI_API_KEY" },
     ],
   },
   parseOptions: parseZaiOptions,
