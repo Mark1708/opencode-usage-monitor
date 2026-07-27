@@ -226,8 +226,8 @@ function parseProvider(
     ...optionalIntegerRangeIssue(input.order, 0, MAX_PROVIDER_ORDER, `${path}.order`),
     ...(!credential.ok ? credential.issues : []),
     ...optionBoundaryIssues(input.options, `${path}.options`),
-    ...(credential.ok && credential.value && !registration.credentialPolicy.allowedSources.includes(credential.value.source)
-      ? [makeIssue(`${path}.credential.source`, "credential source is not allowed for this provider")]
+    ...(credential.ok && credential.value && !isAllowedCredentialReference(registration, credential.value)
+      ? [makeIssue(`${path}.credential.source`, "credential reference is not allowed for this provider")]
       : []),
   ];
   if (issues.length > 0) return failures(issues);
@@ -240,6 +240,17 @@ function parseProvider(
       options: input.options ?? {},
     }),
   };
+}
+
+function isAllowedCredentialReference(
+  registration: ProviderRegistration,
+  reference: CredentialReferenceV2,
+): boolean {
+  const name = reference.source === "env" ? reference.name : reference.entry;
+  return registration.credentialPolicy.allowedSources.includes(reference.source)
+    && registration.credentialPolicy.defaultCandidates.some(
+      (candidate) => candidate.source === reference.source && candidate.name === name,
+    );
 }
 
 function parseCredential(

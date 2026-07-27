@@ -43,6 +43,25 @@ describe("v2 built-in provider catalog", () => {
     expect(deepseek?.ok && deepseek.value.present(readyProvider("deepseek")).id).toBe("deepseek");
   });
 
+  test("lists every supported Z.AI and DeepSeek credential alias in legacy discovery order", () => {
+    const zai = BUILTIN_PROVIDER_CATALOG.find((entry) => entry.metadata.id === "zai");
+    const deepseek = BUILTIN_PROVIDER_CATALOG.find((entry) => entry.metadata.id === "deepseek");
+
+    expect(zai?.credentialPolicy.defaultCandidates).toEqual([
+      { source: "opencode", variant: "zai", name: "zai-coding-plan" },
+      { source: "opencode", variant: "zai", name: "zai" },
+      { source: "opencode", variant: "zhipu", name: "zhipu" },
+      { source: "env", variant: "zai", name: "ZAI_API_KEY" },
+      { source: "env", variant: "zai", name: "ZAI_CODING_PLAN_API_KEY" },
+      { source: "env", variant: "zhipu", name: "ZHIPU_API_KEY" },
+      { source: "env", variant: "zhipu", name: "ZHIPUAI_API_KEY" },
+    ]);
+    expect(deepseek?.credentialPolicy.defaultCandidates).toEqual([
+      { source: "opencode", variant: "deepseek", name: "deepseek" },
+      { source: "env", variant: "deepseek", name: "DEEPSEEK_API_KEY" },
+    ]);
+  });
+
   test("accepts a fixture definition without a central provider switch", () => {
     const fixture = makeFixtureDefinition().registration;
     expect(createProviderCatalog([...BUILTIN_PROVIDER_CATALOG, fixture])).toContain(fixture);
