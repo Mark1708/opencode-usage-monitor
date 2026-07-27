@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { BUILTIN_PROVIDER_CATALOG } from "../providers/builtins.js";
+import { LegacyAdapterFacade } from "../providers/contracts.js";
 import { deepseekUsageAdapter } from "../providers/deepseek.js";
 import { openAIUsageAdapter } from "../providers/openai.js";
 import {
@@ -21,11 +22,15 @@ describe("provider registry resolution", () => {
     expect(resolveProviderRegistration(catalog, "missing")).toBeUndefined();
   });
 
-  test("keeps placeholder v2 definitions out of the unchanged runtime registry", () => {
+  test("keeps OpenAI legacy-only and directs migrated providers through facades", () => {
     expect(PROVIDER_ADAPTERS).toEqual([
       openAIUsageAdapter,
       zaiUsageAdapter,
       deepseekUsageAdapter,
     ]);
+    expect(openAIUsageAdapter).not.toBeInstanceOf(LegacyAdapterFacade);
+    expect(zaiUsageAdapter).toBeInstanceOf(LegacyAdapterFacade);
+    expect(deepseekUsageAdapter).toBeInstanceOf(LegacyAdapterFacade);
+    expect(BUILTIN_PROVIDER_CATALOG.some((entry) => entry.metadata.id === "openai")).toBe(false);
   });
 });
