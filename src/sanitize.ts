@@ -23,6 +23,14 @@ export function sanitizeError(error: unknown): string {
   return sanitized.split("\n")[0] ?? "error";
 }
 
+export function sanitizeCredentialError(error: unknown, credential: string): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const redacted = credential.length > 0
+    ? message.split(credential).join("[redacted]")
+    : message;
+  return sanitizeError(redacted);
+}
+
 export function sanitizeAdditionalProperties(obj: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(obj).filter(([key, value]) => {
