@@ -28,8 +28,7 @@ build:
   extends: .default
   stage: build
   script:
-    - bun run build
-    - bun run build:index
+    - bun run build:all
   artifacts:
     paths:
       - dist/
