@@ -1,66 +1,63 @@
 # USAGE MONITOR PLUGIN
 
-**Version:** 1.0.7 | **npm:** `opencode-usage-monitor` | **Plugin ID:** `usage-monitor:tui`
+**Version:** 2.0.0 | **npm:** `opencode-usage-monitor` | **Plugin ID:** `usage-monitor:tui`
 
 ## OVERVIEW
 
-Read-only API usage quota display for OpenAI and Z.AI (GLM) providers. Fetches usage data, caches with TTL, renders in sidebar.
+Read-only OpenCode TUI sidebar plugin for provider quota and balance visibility. It displays OpenAI ChatGPT subscription usage, Z.AI / GLM quota windows, and DeepSeek account balance without rendering raw credentials or provider API dumps.
 
-## STRUCTURE
+## CURRENT ARCHITECTURE
 
-```
+```text
 usage-monitor/
 ├── src/
-│   ├── index.ts          # Plugin API stub (definePlugin)
-│   ├── tui.ts            # TUI entry -- element/render/refresh loop (383 lines)
-│   ├── auth.ts           # Reads ~/.config/opencode/auth.json for credentials
-│   ├── cache.ts          # File-based TTL cache in /tmp/
-│   ├── config.ts         # Reads ~/.config/opencode/usage-monitor.json
-│   ├── format.ts         # Usage data formatting (severity, percentages, bars)
-│   ├── layout.ts         # Layout constants, truncation, age formatting
-│   ├── sanitize.ts       # Error message sanitization (strips secrets)
-│   ├── severity.ts       # Severity color mapping
-│   ├── providers/
-│   │   ├── types.ts      # Core types: StandardUsageProvider, ProviderContext, UsageMonitorConfig
-│   │   ├── registry.ts   # Adapter discovery + refresh orchestration
-│   │   ├── shared.ts     # AbortController timeout helpers
-│   │   ├── openai.ts     # OpenAI /dashboard/billing/usage adapter
-│   │   └── zai.ts        # Z.AI (GLM) /api context adapter
-│   └── views/
-│       ├── types.ts      # View types: ProviderUsageView, UsageMetric
-│       ├── index.ts      # providerToView() -- adapter output to view model
-│       ├── common.ts     # Shared view formatting helpers
-│       ├── openai-view.ts # OpenAI-specific view formatting
-│       └── zai-view.ts   # Z.AI-specific view formatting
-├── assets/               # Screenshots for README
-├── .gitlab-ci.yml        # CI: validate -> build -> publish
-└── package.json
+│   ├── index.ts               # Plugin API stub (definePlugin)
+│   ├── tui.ts                 # TUI entry, config watching, render state, keybindings
+│   ├── runtime-config.ts      # Version 2 config parser and fail-closed source loading
+│   ├── credentials.ts         # Credential resolver with provider allowlists and epochs
+│   ├── provider-cache.ts      # Account-safe provider cache under /tmp/opencode-usage-monitor-v2/
+│   ├── refresh*.ts            # Refresh coordinator, scheduling, snapshot commits
+│   ├── snapshot-validation.ts # Canonical provider snapshot validation
+│   ├── auth.ts                # OpenCode auth.json discovery and metadata sanitization
+│   ├── format.ts              # Compact line formatting and provider state text
+│   ├── layout.ts              # Width, truncation, age, and compact layout helpers
+│   ├── severity.ts            # Severity color mapping
+│   ├── providers/             # Provider definitions and legacy facade bridge
+│   └── views/                 # Provider-specific view models for TUI rendering
+├── assets/                    # README screenshots
+├── .gitlab-ci.yml             # CI validate/build/publish pipeline
+└── package.json               # Package metadata, scripts, and peer dependencies
 ```
 
 ## WHERE TO LOOK
 
 | Task | File |
 |------|------|
-| Add new provider | `src/providers/` -- implement `UsageProviderAdapter`, register in `registry.ts` |
-| Change display format | `src/views/` -- modify `providerToView()` or add view file |
-| Config options | `src/providers/types.ts` (`UsageMonitorConfig`) + `src/config.ts` (`CONFIG_DEFAULTS`) |
-| Refresh logic | `src/tui.ts` -- `startRefreshCycle()`, `RefreshGuard` |
-| Cache behavior | `src/cache.ts` -- `readCache()`, `writeCache()`, TTL logic |
-| Keybind config | `src/config.ts` -- `refresh_keybind` field (default `<leader>q`) |
+| Add a provider | `src/providers/` plus registration in `src/providers/builtins.ts` |
+| Change provider API mapping | `src/providers/openai.ts`, `src/providers/zai.ts`, or `src/providers/deepseek.ts` |
+| Change displayed rows | `src/views/` first, then `src/format.ts` only for shared formatting |
+| Change config shape | `src/runtime-config.ts` and `src/__tests__/runtime-config.test.ts` |
+| Change credential behavior | `src/credentials.ts`, `src/auth.ts`, and credential tests |
+| Change refresh behavior | `src/refresh*.ts` and `src/__tests__/refresh*.test.ts` |
+| Change cache behavior | `src/provider-cache.ts` and `src/__tests__/provider-cache.test.ts` |
+| Change TUI wiring | `src/tui.ts` and `src/__tests__/tui-lifecycle.test.ts` |
+| Update release docs | `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, and `MAP.md` |
 
-## CONVENTIONS (THIS REPO)
+## CONTRACTS
 
-- **Provider adapter pattern**: Each provider implements `UsageProviderAdapter` interface with `id`, `displayName`, `isAvailable()`, `fetchUsage()`
-- **View separation**: Providers output `StandardUsageProvider`; views transform to `ProviderUsageView` for display
-- **Config fallback chain**: `usage-monitor.json` -> `oh-my-openagent.json` (usage_monitor key) -> defaults
-- **Auth discovery**: Scans `~/.config/opencode/auth.json` entries, matches by field names (apiKey, token, etc.)
-- **Secret regex**: `/sk-[a-zA-Z0-9_-]{20,}/g` used for sanitization -- never logged, stored, or displayed
-- **Cache path**: `/tmp/opencode-usage-monitor-*.json` -- per-provider, TTL-based
+- **Config**: only `version: 2` config is accepted. Missing config, legacy flat keys, unknown provider ids, and malformed provider options render a TUI-visible `config` error and do not start provider work.
+- **Provider activation**: provider presence under `providers` enables that provider. Omitted providers do not resolve credentials, read or write cache entries, or make network requests.
+- **Credentials**: providers may use only allowlisted credential references. OpenAI requires non-expired OpenCode OAuth metadata (`access`, `accountId`, `expires`, `type: "oauth"`). Refresh tokens are never usable provider secrets.
+- **Snapshots**: providers publish canonical `windows`, `alerts`, `modelBreakdown`, and typed ordered `details`. Raw provider objects, `Map`, `additionalProperties`, secret-like keys, and active credential values are rejected before render/cache publication.
+- **Cache**: persistent cache identity is account-safe and provider-scoped. Null-scope entries stay in memory only.
+- **Rendering**: balance-only providers must use summary/detail currency metrics, not fake reset windows.
 
 ## ANTI-PATTERNS
 
-- NEVER add runtime dependencies beyond peer deps (`@opencode-ai/plugin`, `@opentui/solid`, `solid-js`)
-- NEVER scrape provider dashboards -- use official API endpoints only
-- NEVER set `refresh_ms` below 60000
-- NEVER display raw API keys or tokens in error messages
-- NEVER mutate the providers array -- registry returns new arrays
+- NEVER add runtime dependencies beyond peer deps (`@opencode-ai/plugin`, `@opentui/keymap`, `@opentui/solid`, `solid-js`).
+- NEVER scrape provider dashboards. Use official API endpoints only; OpenAI ChatGPT subscription quota uses the WHAM endpoint because OpenCode OAuth credentials expose subscription quota, not organization usage.
+- NEVER support legacy flat config as fallback in the runtime path.
+- NEVER set `refresh.interval_ms` below 60000.
+- NEVER display raw API keys, tokens, auth payloads, or provider response dumps.
+- NEVER mutate provider registries or runtime snapshots; return new arrays/objects.
+- NEVER publish provider snapshots before validation and active credential redaction checks.

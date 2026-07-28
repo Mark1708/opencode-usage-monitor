@@ -1,383 +1,608 @@
+import { type FSWatcher, watch } from "node:fs";
+import type { TuiPluginModule } from "@opencode-ai/plugin/tui";
 import type { JSX } from "@opentui/solid";
 import { createElement, insert, setProp } from "@opentui/solid";
-import { watch, type FSWatcher } from "node:fs";
 import { createSignal } from "solid-js";
-import type { TuiPluginModule } from "@opencode-ai/plugin/tui";
 
-import type { ProviderContext, ProviderId, RefreshGuard, StandardUsageProvider, UsageMonitorConfig } from "./providers/types.js";
-import { CONFIG_DEFAULTS, CONFIG_PATH, configFingerprint, mergeUsageConfig, readUsageConfig } from "./config.js";
-import { filterFreshProviders, readCache, staleProviderIds, writeCache } from "./cache.js";
-import { getActiveAdapters, refreshAllAdapters } from "./providers/registry.js";
-import { formatCollapsedSummary, formatHeader, formatProviderMetricsForState, formatProviderTitle, type FormattedLine } from "./format.js";
+import { CONFIG_DEFAULTS, CONFIG_PATH, configFingerprint } from "./config.js";
+import type { ResolvedUsageConfigV2 } from "./config-types.js";
+import { createCredentialResolver } from "./credentials.js";
+import {
+	type FormattedLine,
+	formatCollapsedSummary,
+	formatHeader,
+	formatProviderMetricsForState,
+	formatProviderTitle,
+} from "./format.js";
 import { formatAge, truncateTo } from "./layout.js";
+import { createProviderCacheV2 } from "./provider-cache.js";
+import type {
+	ProviderId,
+	RefreshGuard,
+	StandardUsageProvider,
+	UsageMonitorConfig,
+} from "./providers/types.js";
+import {
+	createRefreshCoordinator,
+	type ProviderRuntimeState,
+	type RefreshCoordinator,
+} from "./refresh.js";
+import { readUsageConfigV2 } from "./runtime-config.js";
 import { sanitizeError } from "./sanitize.js";
-import { readAuthFile } from "./auth.js";
 import { providerToView } from "./views/index.js";
 import type { ProviderUsageView, TextTheme } from "./views/types.js";
 
 type Child = JSX.Element | string | number | null | undefined | false;
 
-function element(tag: string, props: Record<string, unknown>, children: Child[] = []): JSX.Element {
-  const node = createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (value !== undefined) setProp(node, key, value);
-  }
-  for (const child of children) {
-    if (child !== null && child !== undefined && child !== false) insert(node, child);
-  }
-  return node as JSX.Element;
+type RuntimeConfig = Readonly<{
+	config?: ResolvedUsageConfigV2;
+	render: Required<UsageMonitorConfig>;
+	providers: Record<ProviderId, StandardUsageProvider>;
+	fingerprint: string;
+}>;
+
+function element(
+	tag: string,
+	props: Record<string, unknown>,
+	children: Child[] = [],
+): JSX.Element {
+	const node = createElement(tag);
+	for (const [key, value] of Object.entries(props)) {
+		if (value !== undefined) setProp(node, key, value);
+	}
+	for (const child of children) {
+		if (child !== null && child !== undefined && child !== false)
+			insert(node, child);
+	}
+	return node as JSX.Element;
 }
 
 function text(props: Record<string, unknown>, children: Child[]): JSX.Element {
-  return element("text", props, children);
+	return element("text", props, children);
 }
 
-function box(props: Record<string, unknown>, children: Child[] = []): JSX.Element {
-  return element("box", props, children);
+function box(
+	props: Record<string, unknown>,
+	children: Child[] = [],
+): JSX.Element {
+	return element("box", props, children);
 }
 
 export function createRefreshGuard(): RefreshGuard {
-  let active = false;
-  return {
-    get isActive() { return active; },
-    start: () => {
-      if (active) return false;
-      active = true;
-      return true;
-    },
-    finish: () => { active = false; },
-  };
+	let active = false;
+	return {
+		get isActive() {
+			return active;
+		},
+		start: () => {
+			if (active) return false;
+			active = true;
+			return true;
+		},
+		finish: () => {
+			active = false;
+		},
+	};
 }
 
 export function renderUsagePanel(
-  config: Required<UsageMonitorConfig>,
-  providers: Record<ProviderId, StandardUsageProvider>,
-  collapsed: boolean,
-  collapsedProviderIds: ReadonlySet<ProviderId>,
-  expandedDetailIds: ReadonlySet<ProviderId>,
-  onToggleCollapsed: () => void,
-  onToggleProvider: (id: ProviderId) => void,
-  onToggleDetails: (id: ProviderId) => void,
-  theme: TextTheme,
+	config: Required<UsageMonitorConfig>,
+	providers: Record<ProviderId, StandardUsageProvider>,
+	collapsed: boolean,
+	collapsedProviderIds: ReadonlySet<ProviderId>,
+	expandedDetailIds: ReadonlySet<ProviderId>,
+	onToggleCollapsed: () => void,
+	onToggleProvider: (id: ProviderId) => void,
+	onToggleDetails: (id: ProviderId) => void,
+	theme: TextTheme,
 ): JSX.Element {
-  const width = resolveWidth(config);
-  const right = buildHeaderRight(providers);
-  const headerLine = formatHeader(Object.keys(providers).length, right, collapsed, width, config.symbols);
-  const header = box({ width: "100%", onMouseDown: onToggleCollapsed }, [renderText(headerLine.text, colorForSeverity(headerLine.severity, theme))]);
-  if (collapsed || config.enabled === false) return renderPanel([header]);
+	const width = resolveWidth(config);
+	const right = buildHeaderRight(providers);
+	const headerLine = formatHeader(
+		Object.keys(providers).length,
+		right,
+		collapsed,
+		width,
+		config.symbols,
+	);
+	const header = box({ width: "100%", onMouseDown: onToggleCollapsed }, [
+		renderText(headerLine.text, colorForSeverity(headerLine.severity, theme)),
+	]);
+	if (collapsed || config.enabled === false) return renderPanel([header]);
 
-  const rows = orderedProviders(providers).map((provider) => renderProviderBlock(
-    providerToView(provider),
-    config,
-    collapsedProviderIds,
-    expandedDetailIds,
-    onToggleProvider,
-    onToggleDetails,
-    theme,
-  ));
-  return renderPanel([header, ...rows]);
+	const rows = orderedProviders(providers).map((provider) =>
+		renderProviderBlock(
+			providerToView(provider),
+			config,
+			collapsedProviderIds,
+			expandedDetailIds,
+			onToggleProvider,
+			onToggleDetails,
+			theme,
+		),
+	);
+	return renderPanel([header, ...rows]);
 }
 
-export function toggleProviderCollapse(current: ReadonlySet<ProviderId>, clicked: ProviderId): Set<ProviderId> {
-  if (current.has(clicked)) {
-    return new Set([...current].filter((id) => id !== clicked));
-  }
-  return new Set([...current, clicked]);
+export function toggleProviderCollapse(
+	current: ReadonlySet<ProviderId>,
+	clicked: ProviderId,
+): Set<ProviderId> {
+	if (current.has(clicked)) {
+		return new Set([...current].filter((id) => id !== clicked));
+	}
+	return new Set([...current, clicked]);
 }
 
 export const toggleExpandedProviderId = toggleProviderCollapse;
 
 function renderProviderBlock(
-  view: ProviderUsageView,
-  config: Required<UsageMonitorConfig>,
-  collapsedProviderIds: ReadonlySet<ProviderId>,
-  expandedDetailIds: ReadonlySet<ProviderId>,
-  onToggleProvider: (id: ProviderId) => void,
-  onToggleDetails: (id: ProviderId) => void,
-  theme: TextTheme,
+	view: ProviderUsageView,
+	config: Required<UsageMonitorConfig>,
+	collapsedProviderIds: ReadonlySet<ProviderId>,
+	expandedDetailIds: ReadonlySet<ProviderId>,
+	onToggleProvider: (id: ProviderId) => void,
+	onToggleDetails: (id: ProviderId) => void,
+	theme: TextTheme,
 ): JSX.Element {
-  const width = resolveWidth(config);
-  const providerCollapsed = collapsedProviderIds.has(view.id);
+	const width = resolveWidth(config);
+	const providerCollapsed = collapsedProviderIds.has(view.id);
 
-  if (providerCollapsed) {
-    return box(
-      { width: "100%", flexDirection: "column", onMouseDown: () => onToggleProvider(view.id) },
-      renderLines([formatCollapsedSummary(view, width)], theme),
-    );
-  }
+	if (providerCollapsed) {
+		return box(
+			{
+				width: "100%",
+				flexDirection: "column",
+				onMouseDown: () => onToggleProvider(view.id),
+			},
+			renderLines([formatCollapsedSummary(view, width)], theme),
+		);
+	}
 
-  const showDetails = expandedDetailIds.has(view.id);
-  const titleLine = formatProviderTitle(view, false, width);
-  const metrics = formatProviderMetricsForState(view, config, width, showDetails);
-  const titleEl = box({ width: "100%", onMouseDown: () => onToggleProvider(view.id) }, renderLines([titleLine], theme));
-  const metricEls = metrics.map((line) => box({ width: "100%", onMouseDown: () => onToggleDetails(view.id) }, renderLines([line], theme)));
+	const showDetails = expandedDetailIds.has(view.id);
+	const titleLine = formatProviderTitle(view, false, width);
+	const metrics = formatProviderMetricsForState(
+		view,
+		config,
+		width,
+		showDetails,
+	);
+	const titleEl = box(
+		{ width: "100%", onMouseDown: () => onToggleProvider(view.id) },
+		renderLines([titleLine], theme),
+	);
+	const metricEls = metrics.map((line) =>
+		box(
+			{ width: "100%", onMouseDown: () => onToggleDetails(view.id) },
+			renderLines([line], theme),
+		),
+	);
 
-  return box({ width: "100%", flexDirection: "column" }, [titleEl, ...metricEls]);
+	return box({ width: "100%", flexDirection: "column" }, [
+		titleEl,
+		...metricEls,
+	]);
 }
 
 function renderLines(lines: FormattedLine[], theme: TextTheme): JSX.Element[] {
-  return lines.map((line) => {
-    if (line.suffix) {
-      return box({ flexDirection: "row" }, [
-        text({ fg: colorForSeverity(line.severity, theme) }, [truncateTo(line.text, line.text.length)]),
-        text({ fg: theme.textMuted }, [truncateTo(` · ${line.suffix}`, line.suffix.length + 3)]),
-      ]);
-    }
-    return renderText(line.text, colorForSeverity(line.severity, theme));
-  });
+	return lines.map((line) => {
+		if (line.suffix) {
+			return box({ flexDirection: "row" }, [
+				text({ fg: colorForSeverity(line.severity, theme) }, [
+					truncateTo(line.text, line.text.length),
+				]),
+				text({ fg: theme.textMuted }, [
+					truncateTo(` · ${line.suffix}`, line.suffix.length + 3),
+				]),
+			]);
+		}
+		return renderText(line.text, colorForSeverity(line.severity, theme));
+	});
 }
 
 function renderText(value: string, color: unknown): JSX.Element {
-  return text({ fg: color }, [truncateTo(value, value.length)]);
+	return text({ fg: color }, [truncateTo(value, value.length)]);
 }
 
 function renderPanel(children: Child[]): JSX.Element {
-  return box({ width: "100%", flexDirection: "column", paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 }, children);
+	return box(
+		{
+			width: "100%",
+			flexDirection: "column",
+			paddingTop: 0,
+			paddingBottom: 0,
+			paddingLeft: 0,
+			paddingRight: 0,
+		},
+		children,
+	);
 }
 
-function colorForSeverity(severity: FormattedLine["severity"], theme: TextTheme): unknown {
-  if (severity === "warning") return theme.accent;
-  if (severity === "critical") return theme.error ?? theme.accent;
-  if (severity === "muted") return theme.textMuted;
-  return theme.text;
+function colorForSeverity(
+	severity: FormattedLine["severity"],
+	theme: TextTheme,
+): unknown {
+	if (severity === "warning") return theme.accent;
+	if (severity === "critical") return theme.error ?? theme.accent;
+	if (severity === "muted") return theme.textMuted;
+	return theme.text;
 }
 
-function buildHeaderRight(providers: Record<ProviderId, StandardUsageProvider>): string {
-  const timestamps = Object.values(providers).flatMap((provider) => {
-    if (provider.fetchedAt !== undefined) return [provider.fetchedAt];
-    if (provider.lastGoodAt !== undefined) return [provider.lastGoodAt];
-    return [];
-  });
-  if (timestamps.length === 0) return "";
-  const now = Date.now();
-  const newest = Math.max(...timestamps);
-  return formatAge(newest, now);
+function buildHeaderRight(
+	providers: Record<ProviderId, StandardUsageProvider>,
+): string {
+	const timestamps = Object.values(providers).flatMap((provider) => {
+		if (provider.fetchedAt !== undefined) return [provider.fetchedAt];
+		if (provider.lastGoodAt !== undefined) return [provider.lastGoodAt];
+		return [];
+	});
+	if (timestamps.length === 0) return "";
+	const now = Date.now();
+	const newest = Math.max(...timestamps);
+	return formatAge(newest, now);
 }
 
-function orderedProviders(providers: Record<ProviderId, StandardUsageProvider>): StandardUsageProvider[] {
-  const preferred = ["openai", "zai"];
-  return Object.values(providers).sort((left, right) => {
-    const leftIndex = preferred.indexOf(left.id);
-    const rightIndex = preferred.indexOf(right.id);
-    return (leftIndex === -1 ? 99 : leftIndex) - (rightIndex === -1 ? 99 : rightIndex);
-  });
+function orderedProviders(
+	providers: Record<ProviderId, StandardUsageProvider>,
+): StandardUsageProvider[] {
+	const preferred = ["openai", "zai", "deepseek"];
+	return Object.values(providers).sort((left, right) => {
+		const leftIndex = preferred.indexOf(left.id);
+		const rightIndex = preferred.indexOf(right.id);
+		return (
+			(leftIndex === -1 ? 99 : leftIndex) -
+			(rightIndex === -1 ? 99 : rightIndex)
+		);
+	});
 }
 
 function resolveWidth(config: Required<UsageMonitorConfig>): number {
-  return Number.isFinite(config.width) && config.width > 0 ? config.width : CONFIG_DEFAULTS.width;
+	return Number.isFinite(config.width) && config.width > 0
+		? config.width
+		: CONFIG_DEFAULTS.width;
 }
 
 function withPreviousGood(
-  next: Record<ProviderId, StandardUsageProvider>,
-  previous: Record<ProviderId, StandardUsageProvider>,
+	next: Record<ProviderId, StandardUsageProvider>,
+	previous: Record<ProviderId, StandardUsageProvider>,
 ): Record<ProviderId, StandardUsageProvider> {
-  return Object.fromEntries(Object.entries(next).map(([id, provider]) => {
-    const previousProvider = previous[id];
-    if (provider.status !== "error" || previousProvider?.fetchedAt === undefined) return [id, provider];
-    return [id, { ...provider, lastGoodAt: previousProvider.fetchedAt }];
-  }));
+	return Object.fromEntries(
+		Object.entries(next).map(([id, provider]) => {
+			const previousProvider = previous[id];
+			if (
+				provider.status !== "error" ||
+				previousProvider?.fetchedAt === undefined
+			)
+				return [id, provider];
+			return [id, { ...provider, lastGoodAt: previousProvider.fetchedAt }];
+		}),
+	);
 }
 
-function markProvidersStale(providers: Record<string, StandardUsageProvider>): Record<string, StandardUsageProvider> {
-  return Object.fromEntries(Object.entries(providers).map(([id, provider]) => [id, { ...provider, fetchedAt: 0 }]));
+async function readRuntimeConfig(): Promise<RuntimeConfig> {
+	const v2 = await readUsageConfigV2();
+	if (v2.ok && v2.value.providers.length > 0) {
+		const render = renderConfigFromV2(v2.value);
+		return {
+			config: v2.value,
+			render,
+			providers: {},
+			fingerprint: configFingerprint(render),
+		};
+	}
+	const message = v2.ok
+		? "No providers configured"
+		: formatConfigIssues(v2.issues);
+	return configErrorRuntime(message);
 }
 
-function envSubset(): Record<string, string | undefined> {
-  return {
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    ZAI_API_KEY: process.env.ZAI_API_KEY,
-    ZAI_CODING_PLAN_API_KEY: process.env.ZAI_CODING_PLAN_API_KEY,
-    ZHIPU_API_KEY: process.env.ZHIPU_API_KEY,
-    ZHIPUAI_API_KEY: process.env.ZHIPUAI_API_KEY,
-  };
+function createRuntimeCoordinator(config: ResolvedUsageConfigV2): RefreshCoordinator {
+	return createRefreshCoordinator({
+		providers: config.providers,
+		policy: config.refresh,
+		credentialResolver: createCredentialResolver(),
+		cache: createProviderCacheV2(),
+	});
+}
+
+function renderConfigFromV2(
+	config: ResolvedUsageConfigV2,
+): Required<UsageMonitorConfig> {
+	return {
+		...CONFIG_DEFAULTS,
+		enabled: config.enabled,
+		default_collapsed: config.ui.panel_initial_state === "collapsed",
+		refresh_ms: config.refresh.interval_ms,
+		request_timeout_ms: config.refresh.timeout_ms,
+		show_openai: config.providers.some((provider) => provider.id === "openai"),
+		show_zai: config.providers.some((provider) => provider.id === "zai"),
+		show_deepseek: config.providers.some(
+			(provider) => provider.id === "deepseek",
+		),
+		default_provider_collapsed:
+			config.ui.provider_initial_state === "collapsed",
+		debug: config.diagnostics.debug,
+		width: config.ui.width,
+		symbols: config.ui.symbols,
+		refresh_keybind:
+			config.keybindings.refresh_all ?? CONFIG_DEFAULTS.refresh_keybind,
+	};
+}
+
+export function runtimeStatesToProviders(
+	states: readonly ProviderRuntimeState[],
+	previous: Record<ProviderId, StandardUsageProvider>,
+): Record<ProviderId, StandardUsageProvider> {
+	return withPreviousGood(
+		Object.fromEntries(
+			states.map((state) => [
+				state.id,
+				runtimeStateToProvider(state, previous[state.id]),
+			]),
+		),
+		previous,
+	);
+}
+
+function runtimeStateToProvider(
+	state: ProviderRuntimeState,
+	previous: StandardUsageProvider | undefined,
+): StandardUsageProvider {
+	if (state.snapshot) return snapshotForRuntimeState(state, previous);
+	const status =
+		state.status === "needs_auth"
+			? "missing-auth"
+			: state.status === "loading" || state.status === "refreshing"
+				? "loading"
+				: "error";
+	return {
+		id: state.id,
+		displayName: state.id,
+		status,
+		statusText: state.message,
+		errorMessage: state.message,
+		windows: [],
+		...(previous?.fetchedAt ? { lastGoodAt: previous.fetchedAt } : {}),
+	};
+}
+
+function snapshotForRuntimeState(
+	state: ProviderRuntimeState,
+	previous: StandardUsageProvider | undefined,
+): StandardUsageProvider {
+	const snapshot = state.snapshot;
+	if (!snapshot)
+		return runtimeStateToProvider({ ...state, snapshot: undefined }, previous);
+	if (state.status === "stale")
+		return { ...snapshot, staleAt: state.lastAttemptAt ?? Date.now() };
+	if (state.status === "refreshing")
+		return {
+			...snapshot,
+			...(previous?.fetchedAt ? { lastGoodAt: previous.fetchedAt } : {}),
+		};
+	return snapshot;
+}
+
+function configErrorRuntime(message: string): RuntimeConfig {
+	return {
+		render: { ...CONFIG_DEFAULTS, default_provider_collapsed: false },
+		providers: {
+			config: {
+				id: "config",
+				displayName: "config",
+				status: "error",
+				statusText: message,
+				errorMessage: message,
+				windows: [],
+			},
+		},
+		fingerprint: `config-error:${message}`,
+	};
+}
+
+function formatConfigIssues(issues: readonly { path: string; message: string }[]): string {
+	return issues.slice(0, 3).map((issue) => `${issue.path}: ${issue.message}`).join("; ");
 }
 
 const plugin: TuiPluginModule & { id: string } = {
-  id: "usage-monitor:tui",
-  tui: async (api, _options, _meta) => {
-    const initialConfig = mergeUsageConfig(await readUsageConfig());
-    if (initialConfig.enabled === false) return;
+	id: "usage-monitor:tui",
+	tui: async (api, _options, _meta) => {
+		const initialRuntime = await readRuntimeConfig();
+		if (initialRuntime.render.enabled === false) return;
 
-    const authState = await readAuthFile();
-    const auth = authState.kind === "loaded" ? authState.auth : {};
-    const [getConfig, setConfig] = createSignal<Required<UsageMonitorConfig>>(initialConfig);
-    const [getProviders, setProviders] = createSignal<Record<ProviderId, StandardUsageProvider>>({});
-    const [getCollapsed, setCollapsed] = createSignal<boolean>(initialConfig.default_collapsed);
-    const [getCollapsedProviderIds, setCollapsedProviderIds] = createSignal<Set<ProviderId>>(new Set());
-    const [getExpandedDetailIds, setExpandedDetailIds] = createSignal<Set<ProviderId>>(new Set());
-    const guard = createRefreshGuard();
-    const abortController = new AbortController();
-    let pollTimer: ReturnType<typeof setInterval> | undefined;
-    let configWatcher: FSWatcher | undefined;
-    let fingerprint = configFingerprint(initialConfig);
-    let unregisterRefreshCommand: (() => void) | undefined;
-    let providerCollapseInitialized = false;
+		const [getConfig, setConfig] = createSignal<Required<UsageMonitorConfig>>(
+			initialRuntime.render,
+		);
+		const [getProviders, setProviders] = createSignal<
+			Record<ProviderId, StandardUsageProvider>
+		>({});
+		const [getCollapsed, setCollapsed] = createSignal<boolean>(
+			initialRuntime.render.default_collapsed,
+		);
+		const [getCollapsedProviderIds, setCollapsedProviderIds] = createSignal<
+			Set<ProviderId>
+		>(new Set());
+		const [getExpandedDetailIds, setExpandedDetailIds] = createSignal<
+			Set<ProviderId>
+		>(new Set());
+		let configWatcher: FSWatcher | undefined;
+		let fingerprint = initialRuntime.fingerprint;
+		let unregisterRefreshCommand: (() => void) | undefined;
+		let providerCollapseInitialized = false;
+		let coordinator = initialRuntime.config
+			? createRuntimeCoordinator(initialRuntime.config)
+			: undefined;
 
-    const makeContext = (): ProviderContext => ({ auth, env: envSubset(), config: getConfig(), timeoutMs: getConfig().request_timeout_ms });
-    const requestRender = (): void => api.renderer.requestRender();
-    const setProvidersWithInitialCollapse = (providers: Record<ProviderId, StandardUsageProvider>): void => {
-      setProviders(providers);
-      if (providerCollapseInitialized || !getConfig().default_provider_collapsed) return;
-      providerCollapseInitialized = true;
-      setCollapsedProviderIds(new Set(Object.keys(providers)));
-    };
-    const refreshAll = async (): Promise<void> => {
-      if (!guard.start()) return;
-      try {
-        const config = getConfig();
-        const ctx = makeContext();
-        const ttlMs = config.refresh_ms;
-        const previousProviders = getProviders();
+		const requestRender = (): void => api.renderer.requestRender();
+		const setProvidersWithInitialCollapse = (
+			providers: Record<ProviderId, StandardUsageProvider>,
+		): void => {
+			setProviders(providers);
+			if (
+				providerCollapseInitialized ||
+				!getConfig().default_provider_collapsed
+			)
+				return;
+			providerCollapseInitialized = true;
+			setCollapsedProviderIds(new Set(Object.keys(providers)));
+		};
+		let unsubscribe = coordinator?.subscribe((states) => {
+			setProvidersWithInitialCollapse(
+				runtimeStatesToProviders(states, getProviders()),
+			);
+			requestRender();
+		}) ?? (() => undefined);
+		setProvidersWithInitialCollapse(initialRuntime.providers);
 
-        const cached = readCache();
-        if (cached !== null) {
-          const freshProviders = filterFreshProviders(cached, ttlMs);
-          const activeIds = getActiveAdapters(ctx, config).map((adapter) => adapter.id);
-          const allFresh = staleProviderIds(cached, activeIds, ttlMs).length === 0;
+		const reloadConfig = async (): Promise<void> => {
+			const nextRuntime = await readRuntimeConfig();
+			const nextFingerprint = nextRuntime.fingerprint;
+			if (nextFingerprint === fingerprint) return;
+			fingerprint = nextFingerprint;
+			setConfig(nextRuntime.render);
+			if (!nextRuntime.config) {
+				unsubscribe();
+				coordinator?.dispose();
+				coordinator = undefined;
+				unsubscribe = () => undefined;
+				setProvidersWithInitialCollapse(nextRuntime.providers);
+				requestRender();
+				return;
+			}
+			if (coordinator) {
+				coordinator.reconfigure(
+					nextRuntime.config.providers,
+					nextRuntime.config.refresh,
+				);
+			} else {
+				coordinator = createRuntimeCoordinator(nextRuntime.config);
+				unsubscribe = coordinator.subscribe((states) => {
+					setProvidersWithInitialCollapse(
+						runtimeStatesToProviders(states, getProviders()),
+					);
+					requestRender();
+				});
+			}
+			setProvidersWithInitialCollapse(nextRuntime.providers);
+			void coordinator.refreshAll();
+			requestRender();
+		};
 
-          if (allFresh) {
-            const providers = withPreviousGood(freshProviders, previousProviders);
-            setProvidersWithInitialCollapse(providers);
-            requestRender();
-            return;
-          }
+		const debounceConfigReload = createDebounced(
+			() => void reloadConfig(),
+			100,
+		);
+		try {
+			configWatcher = watch(CONFIG_PATH, () => debounceConfigReload());
+		} catch {
+			configWatcher = undefined;
+		}
 
-          if (Object.keys(freshProviders).length > 0) {
-            setProvidersWithInitialCollapse(withPreviousGood(freshProviders, previousProviders));
-            requestRender();
-          }
-        }
+		const toggleCollapsed = (): void => {
+			setCollapsed(!getCollapsed());
+			requestRender();
+		};
+		const toggleProvider = (id: ProviderId): void => {
+			setCollapsedProviderIds(
+				toggleProviderCollapse(getCollapsedProviderIds(), id),
+			);
+			requestRender();
+		};
+		const toggleDetails = (id: ProviderId): void => {
+			const current = getExpandedDetailIds();
+			const next = new Set(current);
+			if (next.has(id)) {
+				next.delete(id);
+			} else {
+				next.add(id);
+			}
+			setExpandedDetailIds(next);
+			requestRender();
+		};
 
-        const providers = withPreviousGood(
-          await refreshAllAdapters(ctx, config, abortController.signal),
-          previousProviders,
-        );
-        setProvidersWithInitialCollapse(providers);
-        writeCache(providers);
-      } catch (error: unknown) {
-        const cached = readCache();
-        if (cached && Object.keys(cached).length > 0) {
-          setProvidersWithInitialCollapse(cached);
-        } else {
-          setProvidersWithInitialCollapse({ usage: { id: "usage", displayName: "usage", status: "error", statusText: sanitizeError(error), errorMessage: sanitizeError(error), windows: [] } });
-        }
-      } finally {
-        guard.finish();
-        requestRender();
-      }
-    };
+		void coordinator?.refreshAll();
+		api.lifecycle.onDispose(() => {
+			debounceConfigReload.cancel();
+			configWatcher?.close();
+			unsubscribe();
+			coordinator?.dispose();
+			unregisterRefreshCommand?.();
+		});
 
-    const restartPoll = (): void => {
-      if (pollTimer !== undefined) clearInterval(pollTimer);
-      pollTimer = setInterval(() => void refreshAll(), getConfig().refresh_ms);
-    };
+		api.slots.register({
+			order: 840,
+			slots: {
+				sidebar_content() {
+					try {
+						return renderUsagePanel(
+							getConfig(),
+							getProviders(),
+							getCollapsed(),
+							getCollapsedProviderIds(),
+							getExpandedDetailIds(),
+							toggleCollapsed,
+							toggleProvider,
+							toggleDetails,
+							api.theme.current as TextTheme,
+						);
+					} catch (renderErr: unknown) {
+						const theme = api.theme.current as TextTheme;
+						return box({ width: "100%" }, [
+							text({ fg: theme.error ?? theme.textMuted }, [
+								`usage-monitor render error: ${String(renderErr).slice(0, 80)}`,
+							]),
+						]);
+					}
+				},
+			},
+		});
 
-    const reloadConfig = async (): Promise<void> => {
-      const nextConfig = mergeUsageConfig(await readUsageConfig());
-      const nextFingerprint = configFingerprint(nextConfig);
-      if (nextFingerprint === fingerprint) return;
-      fingerprint = nextFingerprint;
-      setConfig(nextConfig);
-      restartPoll();
-      requestRender();
-      void refreshAll();
-    };
-
-    const debounceConfigReload = createDebounced(() => void reloadConfig(), 100);
-    try {
-      configWatcher = watch(CONFIG_PATH, () => debounceConfigReload());
-    } catch {
-      configWatcher = undefined;
-    }
-
-    const toggleCollapsed = (): void => {
-      setCollapsed(!getCollapsed());
-      requestRender();
-    };
-    const toggleProvider = (id: ProviderId): void => {
-      setCollapsedProviderIds(toggleProviderCollapse(getCollapsedProviderIds(), id));
-      requestRender();
-    };
-    const toggleDetails = (id: ProviderId): void => {
-      const current = getExpandedDetailIds();
-      const next = new Set(current);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      setExpandedDetailIds(next);
-      requestRender();
-    };
-
-    restartPoll();
-    void refreshAll();
-    api.lifecycle.onDispose(() => {
-      if (pollTimer !== undefined) clearInterval(pollTimer);
-      debounceConfigReload.cancel();
-      configWatcher?.close();
-      abortController.abort();
-      unregisterRefreshCommand?.();
-    });
-
-    api.slots.register({
-      order: 840,
-      slots: {
-        sidebar_content() {
-          try {
-            return renderUsagePanel(
-              getConfig(),
-              getProviders(),
-              getCollapsed(),
-              getCollapsedProviderIds(),
-              getExpandedDetailIds(),
-              toggleCollapsed,
-              toggleProvider,
-              toggleDetails,
-              api.theme.current as TextTheme,
-            );
-          } catch (renderErr: unknown) {
-            const theme = api.theme.current as TextTheme;
-            return box({ width: "100%" }, [
-              text({ fg: theme.error ?? theme.textMuted }, [`usage-monitor render error: ${String(renderErr).slice(0, 80)}`]),
-            ]);
-          }
-        },
-      },
-    });
-
-    unregisterRefreshCommand = api.command?.register(() => [{
-      title: "Refresh Usage Data",
-      value: "usage-monitor:refresh",
-      description: "Force refresh usage data from all providers",
-      category: "usage-monitor",
-      keybind: getConfig().refresh_keybind,
-      slash: { name: "usage-refresh" },
-      onSelect: async (_dialog) => {
-        try {
-          const cachedProviders = readCache();
-          if (cachedProviders !== null) writeCache(markProvidersStale(cachedProviders));
-          await refreshAll();
-          api.ui.toast({ title: "Usage Monitor", message: "Usage data refreshed", variant: "success", duration: 2000 });
-        } catch (error: unknown) {
-          api.ui.toast({ title: "Usage Monitor", message: `Usage data refresh failed: ${sanitizeError(error)}`, variant: "error", duration: 2000 });
-        }
-      },
-    }]);
-  },
+		unregisterRefreshCommand = api.command?.register(() => [
+			{
+				title: "Refresh Usage Data",
+				value: "usage-monitor:refresh",
+				description: "Force refresh usage data from all providers",
+				category: "usage-monitor",
+				keybind: getConfig().refresh_keybind,
+				slash: { name: "usage-refresh" },
+				onSelect: async (_dialog) => {
+					try {
+						if (!coordinator) throw new Error("usage monitor config is invalid");
+						await coordinator.refreshAll();
+						api.ui.toast({
+							title: "Usage Monitor",
+							message: "Usage data refreshed",
+							variant: "success",
+							duration: 2000,
+						});
+					} catch (error: unknown) {
+						api.ui.toast({
+							title: "Usage Monitor",
+							message: `Usage data refresh failed: ${sanitizeError(error)}`,
+							variant: "error",
+							duration: 2000,
+						});
+					}
+				},
+			},
+		]);
+	},
 };
 
-function createDebounced(callback: () => void, delayMs: number): (() => void) & { cancel: () => void } {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const debounced = (() => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = setTimeout(callback, delayMs);
-  }) as (() => void) & { cancel: () => void };
-  debounced.cancel = () => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-  };
-  return debounced;
+function createDebounced(
+	callback: () => void,
+	delayMs: number,
+): (() => void) & { cancel: () => void } {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const debounced = (() => {
+		if (timer !== undefined) clearTimeout(timer);
+		timer = setTimeout(callback, delayMs);
+	}) as (() => void) & { cancel: () => void };
+	debounced.cancel = () => {
+		if (timer !== undefined) clearTimeout(timer);
+		timer = undefined;
+	};
+	return debounced;
 }
 
 export default plugin;

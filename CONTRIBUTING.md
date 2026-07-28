@@ -147,9 +147,18 @@ bun run build:all
 
 Then test the built plugin with your local OpenCode setup. Keep local configuration and credentials out of commits.
 
+For local OpenCode testing without publishing to npm, pack the current checkout and install the tarball:
+
+```bash
+npm pack
+opencode plugin "$(pwd)/opencode-usage-monitor-2.0.0.tgz" --global --force
+```
+
+If your OpenCode build does not include the plugin installer command, configure the built local package path manually in your OpenCode config.
+
 ## Release process
 
-Maintainers handle releases. The `prepublishOnly` script builds the plugin before publishing.
+Maintainers handle releases. Build and validate locally before publishing; CI is expected to provide the final `dist/` artifacts, and `prepublishOnly` intentionally does not rebuild them.
 
 ## Language
 

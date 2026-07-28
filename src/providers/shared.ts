@@ -30,15 +30,32 @@ export function normalizeEpochMs(value: unknown): number | undefined {
 
 export function createTimeoutController(timeoutMs: number, parent?: AbortSignal): TimeoutController {
   const controller = new AbortController() as TimeoutController;
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  const abort = (): void => controller.abort();
-  parent?.addEventListener("abort", abort, { once: true });
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let listening = false;
   const clear = (): void => {
-    clearTimeout(timeoutId);
-    parent?.removeEventListener("abort", abort);
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    timeoutId = undefined;
+    if (listening) parent?.removeEventListener("abort", abortFromParent);
+    listening = false;
+  };
+  const abortFromParent = (): void => {
+    controller.abort(parent?.reason);
+    clear();
   };
   controller.clear = clear;
   controller.dispose = clear;
+  if (parent?.aborted) {
+    controller.abort(parent.reason);
+    return controller;
+  }
+  timeoutId = setTimeout(() => {
+    controller.abort();
+    clear();
+  }, timeoutMs);
+  if (parent) {
+    parent.addEventListener("abort", abortFromParent, { once: true });
+    listening = true;
+  }
   return controller;
 }
 

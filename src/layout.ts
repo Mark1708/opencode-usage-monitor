@@ -94,6 +94,12 @@ export function formatMoney(cents: number): string {
   return `$${Number.isInteger(dollars) ? dollars.toFixed(0) : dollars.toFixed(2)}`;
 }
 
+export function formatCurrency(value: number | undefined, currency: string | undefined): string | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  const symbol = currency === "CNY" ? "\u00a5" : currency ? `${currency} ` : "";
+  return `${symbol}${value.toFixed(2)}`;
+}
+
 export function formatProviderStatusLine(provider: StandardUsageProvider | string, status: string, width: number): string {
   const displayName = typeof provider === "string" ? provider : provider.displayName;
   const name = padRight(`  ${displayName}`, PROVIDER_NAME_WIDTH);

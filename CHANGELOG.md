@@ -5,10 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-07-28
+
+### Breaking
+
+- Replaced the legacy flat runtime config with a strict `version: 2` contract.
+- Removed fallback support for `show_openai`, `show_zai`, `show_deepseek`, `refresh_ms`, and other legacy flat fields.
+- Changed provider activation to be driven by provider presence under `providers`.
+- Changed OpenAI quota collection to require OpenCode OAuth subscription credentials instead of OpenAI Platform API keys.
+- Changed balance-only provider rendering so DeepSeek no longer appears as a fake reset window.
+
+### Added
+
+- Added a deterministic refresh coordinator with bootstrap cache reads, explicit refreshes, stale timers, cancellation, and subscriber snapshots.
+- Added account-safe provider cache isolation under `/tmp/opencode-usage-monitor-v2/`.
+- Added a provider credential resolver with provider allowlists, credential epochs, and safe account metadata.
+- Added canonical provider snapshot validation before render/cache publication.
+- Added TUI-visible config errors for missing, malformed, or legacy config.
+- Added DeepSeek balance summary/detail rendering.
+- Added local tarball installation guidance for testing without npm publish.
+
+### Changed
+
+- OpenAI, Z.AI / GLM, and DeepSeek providers now publish canonical `windows`, `alerts`, `modelBreakdown`, and typed `details`.
+- Provider-specific view files now own provider display mapping before shared formatting.
+- Runtime config reloads preserve panel and provider collapse state.
+- Z.AI enterprise coding plan config now uses `providers.zai.options.organization_id` and `providers.zai.options.project_id`.
+- README screenshots were refreshed for the 2.0 runtime display.
+- Architecture and contributor docs were updated to describe the current runtime, cache, credential, and release flow.
+
+### Fixed
+
+- OpenAI and Z.AI windows with missing usage are omitted instead of being displayed as `0%`.
+- Z.AI empty plan levels no longer publish invalid empty plan details.
+- Z.AI model breakdown snapshots no longer publish own `undefined` fields.
+- Provider errors and snapshots reject active credential leaks before rendering or cache writes.
+- Refresh work rejects stale completions after credential/config changes.
+
+### Removed
+
+- Removed historical architecture notes from the published documentation set.
+- Removed project-owned version-suffixed source and test filenames in favor of runtime names.
+
 ## [1.0.4] - 2025-05-22
 
 ### Changed
-- Version bump to match agents-sidebar (version parity)
+
+- Version bump to match agents-sidebar (version parity).
 
 ## [1.0.3] - 2025-05-22
 

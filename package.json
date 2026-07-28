@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "opencode-usage-monitor",
-  "version": "1.0.7",
+  "version": "2.0.0",
   "description": "OpenCode TUI sidebar plugin that displays API usage quotas for OpenAI and Z.AI (GLM) providers",
   "type": "module",
   "main": "dist/index.js",
@@ -54,9 +54,10 @@
   },
   "homepage": "https://www.npmjs.com/package/opencode-usage-monitor",
   "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.4.0",
-    "@opentui/solid": ">=0.1.0",
-    "solid-js": ">=1.8.0"
+    "@opencode-ai/plugin": ">=1.15.0",
+    "@opentui/keymap": ">=0.2.10",
+    "@opentui/solid": ">=0.2.10",
+    "solid-js": ">=1.9.12"
   },
   "devDependencies": {
     "@types/bun": "latest",

@@ -1,5 +1,5 @@
-import type { StandardUsageProvider, StandardUsageWindow } from "../providers/types.js";
-import { formatPercent, formatReset, formatTokens } from "../layout.js";
+import type { DetailValue, ProviderDetail, StandardUsageProvider, StandardUsageWindow } from "../providers/types.js";
+import { formatCurrency, formatPercent, formatReset, formatTokens } from "../layout.js";
 import { getWindowSeverity } from "../severity.js";
 import type { ProviderUsageView, UsageMetric, UsageTone } from "./types.js";
 
@@ -39,10 +39,26 @@ export function windowMetric(window: StandardUsageWindow, priority: number): Usa
 }
 
 export function windowValue(window: StandardUsageWindow): string {
-  const main = formatPercent(window.percentage) || formatUsedLimit(window) || window.budgetLabel || "n/a";
+  const main = formatCanonicalUsage(window) || formatPercent(window.percentage) || formatMoneyWindow(window) || formatUsedLimit(window) || window.budgetLabel || "n/a";
   const suffix = [window.resetLabel ?? formatReset(window.resetAt)]
     .filter((part): part is string => part !== undefined && part.length > 0);
   return [main, ...suffix].join(" · ");
+}
+
+export function providerDetailsToMetrics(details: readonly ProviderDetail[] | undefined): UsageMetric[] {
+  return (details ?? []).map((detail, index) => ({
+    key: detail.visibility === "debug" ? `debug-${detail.key}` : detail.key,
+    label: detail.label,
+    value: detailValueToString(detail.value),
+    priority: detail.priority ?? 50 - index,
+    ...(detail.tone ? { tone: detail.tone } : {}),
+    ...(detail.visibility === "summary" ? { compact: true } : { detailOnly: true }),
+  }));
+}
+
+function formatMoneyWindow(window: StandardUsageWindow): string | undefined {
+  if (window.kind !== "credits" && window.kind !== "cost") return undefined;
+  return formatCurrency(window.currentValue, window.unitLabel);
 }
 
 export function splitMetricValue(fullValue: string): { main: string; suffix?: string } {
@@ -72,6 +88,13 @@ export function stringMetric(key: string, label: string, value: unknown, priorit
   return { key, label, value: formatted, priority, ...options };
 }
 
+export function numberMetric(key: string, label: string, value: unknown, currency: string | undefined, priority: number, options: { compact?: boolean; tone?: UsageTone; detailOnly?: boolean } = {}): UsageMetric | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const formatted = formatCurrency(value, currency);
+  if (formatted === undefined) return undefined;
+  return { key, label, value: formatted, priority, ...options };
+}
+
 export function formatUnknown(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (typeof value === "number" && Number.isFinite(value)) return formatTokens(value);
@@ -79,6 +102,20 @@ export function formatUnknown(value: unknown): string | undefined {
   if (Array.isArray(value)) return `items[${value.length}]`;
   if (value && typeof value === "object") return `props[${Object.keys(value).length}]`;
   return undefined;
+}
+
+function formatCanonicalUsage(window: StandardUsageWindow): string | undefined {
+  if (!window.usage) return undefined;
+  if (window.usage.kind === "percent") return formatPercent(window.usage.usedPercent);
+  return `${formatTokens(window.usage.used)}/${formatTokens(window.usage.limit)} ${window.usage.unit}`;
+}
+
+function detailValueToString(value: DetailValue): string {
+  if (value.kind === "text") return value.value;
+  if (value.kind === "flag") return value.value ? "yes" : "no";
+  if (value.kind === "currency") return formatCurrency(value.value, value.currency) ?? String(value.value);
+  const formatted = formatTokens(value.value);
+  return value.unit ? `${formatted} ${value.unit}` : formatted;
 }
 
 function severityTone(severity: "normal" | "warning" | "critical" | "muted"): UsageTone {
