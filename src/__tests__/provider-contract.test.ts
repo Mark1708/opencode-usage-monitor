@@ -3,6 +3,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { LegacyAdapterFacade } from "../providers/contracts.js";
+import type { UsageProviderSnapshot } from "../providers/types.js";
+import { validateAndCloneUsageSnapshot } from "../snapshot-validation.js";
 import { makeCtx } from "./_helpers.js";
 import {
   makeFixtureBridge,
@@ -10,6 +12,72 @@ import {
 } from "./_provider-contract-fixtures.js";
 
 describe("provider definition contracts", () => {
+	test("accepts a canonical provider snapshot with typed windows and details", () => {
+		const snapshot: UsageProviderSnapshot = {
+			id: "fixture",
+			displayName: "Fixture",
+			status: "ready",
+			windows: [
+				{
+					id: "fixture-week",
+					label: "week",
+					kind: "weekly",
+					period: { kind: "rolling", durationMs: 7 * 24 * 60 * 60 * 1000 },
+					usage: { kind: "percent", usedPercent: 42 },
+					resetAt: Date.now() + 60_000,
+					severity: "normal",
+				},
+			],
+			details: [
+				{
+					key: "plan",
+					label: "plan",
+					value: { kind: "text", value: "pro" },
+					visibility: "summary",
+				},
+			],
+			fetchedAt: Date.now(),
+		};
+
+		const result = validateAndCloneUsageSnapshot(snapshot, "fixture");
+
+	expect(result.ok).toBe(true);
+	if (!result.ok) return;
+	expect(Object.isFrozen(result.snapshot)).toBe(true);
+	expect(Object.isFrozen(result.snapshot.windows[0])).toBe(true);
+	expect(Object.isFrozen(result.snapshot.details?.[0]?.value)).toBe(true);
+	});
+
+	test("rejects invalid canonical usage and detail values", () => {
+		const base = {
+			id: "fixture",
+			displayName: "Fixture",
+			status: "ready",
+			fetchedAt: Date.now(),
+		};
+
+		expect(validateAndCloneUsageSnapshot({
+			...base,
+			windows: [{ id: "bad", label: "bad", period: { kind: "unknown" }, usage: { kind: "percent", usedPercent: Number.NaN } }],
+			details: [],
+		}, "fixture")).toEqual({ ok: false, reason: "invalid" });
+		expect(validateAndCloneUsageSnapshot({
+			...base,
+			windows: [{ id: "bad", label: "bad", period: { kind: "unknown" }, usage: { kind: "quota", used: 1, limit: 0, unit: "tokens" } }],
+			details: [],
+		}, "fixture")).toEqual({ ok: false, reason: "invalid" });
+		expect(validateAndCloneUsageSnapshot({
+			...base,
+			windows: [],
+			details: [{ key: "apiKey", label: "API key", value: { kind: "text", value: "safe" }, visibility: "detail" }],
+		}, "fixture")).toEqual({ ok: false, reason: "invalid" });
+		expect(validateAndCloneUsageSnapshot({
+			...base,
+			windows: [{ id: "legacy", label: "legacy", kind: "monthly", percentage: 42 }],
+			details: [],
+		}, "fixture")).toEqual({ ok: false, reason: "invalid" });
+	});
+
   test("preserves local option types and reports parse success or failure", () => {
     const definition = makeFixtureDefinition();
     const success = definition.parseOptions({ region: "eu" });

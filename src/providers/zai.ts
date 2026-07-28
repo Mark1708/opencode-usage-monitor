@@ -1,5 +1,5 @@
 import { discoverZaiCredential } from "../auth.js";
-import { hasSecretPattern, sanitizeAdditionalProperties, sanitizeCredentialError } from "../sanitize.js";
+import { hasSecretPattern, sanitizeCredentialError } from "../sanitize.js";
 import { getWindowSeverity } from "../severity.js";
 import { zaiProviderToView } from "../views/zai-view.js";
 import {
@@ -259,18 +259,40 @@ function invalidOptions<T>(path: string, message: string): ValidationResult<T> {
 
 export function normalizeZaiQuota(raw: unknown, baseUrl: string = "https://api.z.ai", nowMs: number = Date.now()): StandardUsageProvider {
   const payload = extractPayload(raw);
+  const plan = readString(payload.level);
   const limits = parseLimits(payload.limits);
-  const windows = limits.map((limit) => limitToWindow(limit, nowMs));
+  const windows = limits.flatMap((limit) => {
+    const window = limitToWindow(limit);
+    return window ? [window] : [];
+  });
   const modelBreakdown = limits.flatMap((limit) => limit.usageDetails ?? []);
+  const details = [
+    plan
+      ? { key: "plan", label: "plan", value: { kind: "text" as const, value: plan }, visibility: "detail" as const, priority: 100 }
+      : undefined,
+    ...modelBreakdown.flatMap((model, index) => {
+      const value = model.used ?? model.percentage;
+      return value === undefined
+        ? []
+        : [{
+          key: `model-${model.id}`,
+          label: model.label,
+          value: { kind: "number" as const, value, unit: model.unitLabel ?? (model.used !== undefined ? "usage" : "%") },
+          visibility: "detail" as const,
+          priority: 70 - index,
+        }];
+    }),
+    { key: "provider-base-url", label: "base url", value: { kind: "text" as const, value: baseUrl }, visibility: "debug" as const, priority: 1, tone: "muted" as const },
+  ].filter((detail): detail is NonNullable<typeof detail> => detail !== undefined);
   return {
     id: "zai",
     displayName: "z.ai",
     status: windows.length > 0 ? "ready" : "partial",
     ...(windows.length === 0 ? { statusText: "partial data" } : {}),
-    ...(typeof payload.level === "string" ? { plan: payload.level } : {}),
+    ...(plan ? { plan } : {}),
     windows,
+    details,
     ...(modelBreakdown.length > 0 ? { modelBreakdown } : {}),
-    additionalProperties: sanitizeAdditionalProperties({ providerBaseUrl: baseUrl }),
     fetchedAt: nowMs,
   };
 }
@@ -303,12 +325,16 @@ function parseLimits(raw: unknown): ZaiLimit[] {
   });
 }
 
-function limitToWindow(limit: ZaiLimit, nowMs: number): StandardUsageWindow {
+function limitToWindow(limit: ZaiLimit): StandardUsageWindow | undefined {
   const resetAt = normalizeEpochMs(limit.nextResetTime);
+  const usage = usageForLimit(limit);
+  if (!usage) return undefined;
   const standard = {
     id: `zai-${limit.id}`,
     label: labelForLimit(limit),
     kind: kindForLimit(limit),
+    period: periodForLimit(limit),
+    usage,
     ...(limit.percentage !== undefined ? { percentage: limit.percentage } : {}),
     ...(limit.used !== undefined ? { used: limit.used } : {}),
     ...(limit.limit !== undefined ? { limit: limit.limit } : {}),
@@ -318,9 +344,30 @@ function limitToWindow(limit: ZaiLimit, nowMs: number): StandardUsageWindow {
     ...(limit.type === "TIME_LIMIT" && limit.limit !== undefined ? { budgetLabel: `${limit.limit}s budget` } : {}),
     ...(limit.type === "TOKENS_LIMIT" ? { unitLabel: "tokens" } : {}),
     ...(limit.remaining === 0 || (limit.percentage ?? 0) >= 100 ? { limitReached: true } : {}),
-    additionalProperties: sanitizeAdditionalProperties({ type: limit.type, unit: limit.unit, number: limit.number, nowMs }),
   } satisfies StandardUsageWindow;
   return { ...standard, severity: getWindowSeverity(standard) };
+}
+
+function usageForLimit(limit: ZaiLimit) {
+  const unit = unitForLimit(limit);
+  if (limit.used !== undefined && limit.limit !== undefined && limit.limit > 0) {
+    return { kind: "quota" as const, used: limit.used, limit: limit.limit, unit };
+  }
+  if (limit.percentage !== undefined) return { kind: "percent" as const, usedPercent: limit.percentage };
+  return undefined;
+}
+
+function periodForLimit(limit: ZaiLimit) {
+  if (limit.unit === 3 && limit.number) return { kind: "rolling" as const, durationMs: limit.number * 60 * 60 * 1000 };
+  if (limit.unit === 6 && limit.number === 1) return { kind: "calendar" as const, unit: "week" as const };
+  if (limit.unit === 5 && limit.number === 1) return { kind: "calendar" as const, unit: "month" as const };
+  return { kind: "unknown" as const };
+}
+
+function unitForLimit(limit: ZaiLimit): string {
+  if (limit.type === "TIME_LIMIT") return "seconds";
+  if (limit.type === "TOKENS_LIMIT") return "tokens";
+  return "units";
 }
 
 function parseUsageDetails(raw: unknown): StandardModelBreakdown[] | undefined {
@@ -329,14 +376,19 @@ function parseUsageDetails(raw: unknown): StandardModelBreakdown[] | undefined {
     const data = asRecord(entry);
     const modelCode = data ? readString(data.modelCode) ?? readString(data.model) : undefined;
     if (!data || !modelCode) return [];
+    const percentage = readNumber(data.percentage);
+    const used = readFirstNumber(data.usage, data.used);
+    const unitLabel = readString(data.unitLabel);
+    const requests = readNumber(data.requests);
+    const costUsd = readNumber(data.costUsd);
     return [{
       id: slug(modelCode),
       label: modelCode,
-      percentage: readNumber(data.percentage),
-      used: readFirstNumber(data.usage, data.used),
-      unitLabel: readString(data.unitLabel),
-      requests: readNumber(data.requests),
-      costUsd: readNumber(data.costUsd),
+      ...(percentage !== undefined ? { percentage } : {}),
+      ...(used !== undefined ? { used } : {}),
+      ...(unitLabel !== undefined ? { unitLabel } : {}),
+      ...(requests !== undefined ? { requests } : {}),
+      ...(costUsd !== undefined ? { costUsd } : {}),
     } satisfies StandardModelBreakdown];
   });
   return details.length > 0 ? details : undefined;

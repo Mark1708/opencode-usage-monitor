@@ -1,6 +1,5 @@
 import { discoverDeepseekCredential } from "../auth.js";
-import { sanitizeAdditionalProperties, sanitizeCredentialError } from "../sanitize.js";
-import { getWindowSeverity } from "../severity.js";
+import { sanitizeCredentialError } from "../sanitize.js";
 import { deepseekProviderToView } from "../views/deepseek-view.js";
 import {
   defineProvider,
@@ -10,8 +9,8 @@ import {
   type ValidationIssue,
   type ValidationResult,
 } from "./contracts.js";
-import { asRecord, createStatusProvider, createTimeoutController, readString, slug } from "./shared.js";
-import type { ProviderContext, StandardUsageProvider, StandardUsageWindow } from "./types.js";
+import { asRecord, createStatusProvider, createTimeoutController, readString } from "./shared.js";
+import type { ProviderContext, StandardUsageProvider } from "./types.js";
 
 const BALANCE_URL = "https://api.deepseek.com/user/balance";
 const statusProvider = createStatusProvider("deepseek", "deepseek");
@@ -149,32 +148,24 @@ export function normalizeDeepseekBalance(raw: unknown, nowMs: number = Date.now(
     };
   }
   const cny = infos.find((info) => info.currency === "CNY") ?? infos[0];
-  const window = balanceWindow(cny, nowMs);
   return {
     id: "deepseek",
     displayName: "deepseek",
     status: available ? "ready" : "partial",
     ...(available ? {} : { statusText: "API access unavailable" }),
-    windows: [window],
-    additionalProperties: sanitizeAdditionalProperties({
-      deepseekCurrency: cny.currency,
-      deepseekGrantedAmount: cny.granted,
-      deepseekToppedAmount: cny.topped,
-    }),
+    windows: [],
+    details: balanceDetails(cny, available),
     fetchedAt: nowMs,
   };
 }
 
-function balanceWindow(info: BalanceInfo, nowMs: number): StandardUsageWindow {
-  const standard = {
-    id: `deepseek-${slug(info.currency)}`,
-    label: "balance",
-    kind: "credits" as const,
-    currentValue: info.total,
-    unitLabel: info.currency,
-    additionalProperties: sanitizeAdditionalProperties({ nowMs }),
-  } satisfies StandardUsageWindow;
-  return { ...standard, severity: getWindowSeverity(standard) };
+function balanceDetails(info: BalanceInfo, available: boolean) {
+  return [
+    { key: "balance", label: "balance", value: { kind: "currency" as const, value: info.total, currency: info.currency }, visibility: "summary" as const, priority: 100 },
+    { key: "granted", label: "granted", value: { kind: "currency" as const, value: info.granted, currency: info.currency }, visibility: "detail" as const, priority: 80 },
+    { key: "topped-up", label: "topped-up", value: { kind: "currency" as const, value: info.topped, currency: info.currency }, visibility: "detail" as const, priority: 70 },
+    { key: "available", label: "available", value: { kind: "flag" as const, value: available }, visibility: "debug" as const, priority: 10 },
+  ];
 }
 
 function parseBalanceInfos(raw: unknown): BalanceInfo[] {

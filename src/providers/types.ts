@@ -4,6 +4,32 @@ export type ProviderVisibilityConfigKey = "show_openai" | "show_zai" | "show_dee
 
 export type UsageSeverity = "normal" | "warning" | "critical" | "muted";
 
+export type ProviderStatus = "loading" | "ready" | "partial" | "missing-auth" | "forbidden" | "unsupported" | "error";
+
+export type UsageAmount =
+  | Readonly<{ kind: "percent"; usedPercent: number }>
+  | Readonly<{ kind: "quota"; used: number; limit: number; unit: string }>;
+
+export type UsagePeriod =
+  | Readonly<{ kind: "rolling"; durationMs: number }>
+  | Readonly<{ kind: "calendar"; unit: "day" | "week" | "month" | "billing" }>
+  | Readonly<{ kind: "unknown" }>;
+
+export type DetailValue =
+  | Readonly<{ kind: "text"; value: string }>
+  | Readonly<{ kind: "number"; value: number; unit?: string }>
+  | Readonly<{ kind: "currency"; value: number; currency: string }>
+  | Readonly<{ kind: "flag"; value: boolean }>;
+
+export type ProviderDetail = Readonly<{
+  key: string;
+  label: string;
+  value: DetailValue;
+  visibility: "summary" | "detail" | "debug";
+  priority?: number;
+  tone?: "normal" | "muted" | "good" | "warn" | "bad";
+}>;
+
 export type UsageWindowKind =
   | "rolling"
   | "daily"
@@ -20,6 +46,8 @@ export type StandardUsageWindow = {
   id: string;
   label: string;
   kind: UsageWindowKind;
+  period: UsagePeriod;
+  usage: UsageAmount;
   percentage?: number;
   used?: number;
   limit?: number;
@@ -32,14 +60,12 @@ export type StandardUsageWindow = {
   limitReached?: boolean;
   severity?: UsageSeverity;
   summaryDetails?: string[];
-  additionalProperties?: Record<string, unknown>;
 };
 
 export type StandardUsageAlert = {
   id: string;
   label: string;
   severity: UsageSeverity;
-  additionalProperties?: Record<string, unknown>;
 };
 
 export type StandardModelBreakdown = {
@@ -51,24 +77,38 @@ export type StandardModelBreakdown = {
   costUsd?: number;
   requests?: number;
   severity?: UsageSeverity;
-  additionalProperties?: Record<string, unknown>;
 };
 
 export type StandardUsageProvider = {
   id: ProviderId;
   displayName: string;
-  status: "loading" | "ready" | "partial" | "missing-auth" | "forbidden" | "unsupported" | "error";
+  status: ProviderStatus;
   statusText?: string;
   plan?: string;
   windows: StandardUsageWindow[];
+  details?: ProviderDetail[];
   alerts?: StandardUsageAlert[];
   modelBreakdown?: StandardModelBreakdown[];
-  additionalProperties?: Record<string, unknown>;
   fetchedAt?: number;
   staleAt?: number;
   lastGoodAt?: number;
   errorMessage?: string;
 };
+
+export type UsageProviderSnapshot = Readonly<{
+  id: ProviderId;
+  displayName: string;
+  status: ProviderStatus;
+  statusText?: string;
+  windows: readonly Readonly<StandardUsageWindow>[];
+  details: readonly ProviderDetail[];
+  alerts?: readonly StandardUsageAlert[];
+  modelBreakdown?: readonly StandardModelBreakdown[];
+  fetchedAt?: number;
+  staleAt?: number;
+  lastGoodAt?: number;
+  errorMessage?: string;
+}>;
 
 export type ProviderContext = {
   auth: Record<string, unknown>;
@@ -125,6 +165,7 @@ export type AuthEntry = {
   refresh?: string;
   expires?: number;
   accountId?: string;
+  metadata?: Record<string, string>;
 };
 
 export type AuthJson = Record<string, AuthEntry>;
