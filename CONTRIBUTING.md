@@ -151,7 +151,7 @@ For local OpenCode testing without publishing to npm, pack the current checkout 
 
 ```bash
 npm pack
-opencode plugin "$(pwd)/opencode-usage-monitor-2.0.0.tgz" --global --force
+opencode plugin "$(pwd)/opencode-usage-monitor-2.0.1.tgz" --global --force
 ```
 
 If your OpenCode build does not include the plugin installer command, configure the built local package path manually in your OpenCode config.

@@ -14,7 +14,7 @@
 | Status | Actively maintained personal OpenCode tool/plugin |
 | Type | OpenCode TUI plugin / host extension |
 | Host app | OpenCode `>= v1.14.49` documented; `@opencode-ai/plugin >=1.15.0` peer dependency |
-| Package | `opencode-usage-monitor` `2.0.0` package metadata |
+| Package | `opencode-usage-monitor` `2.0.1` package metadata |
 | Runtime | Bun `>= 1.1.0` documented for local development |
 | Maintainer checks | `bun install && bun run build:all && bun test && bun run typecheck` |
 
@@ -89,7 +89,7 @@ For release-candidate testing, build and pack the local checkout, then install t
 ```sh
 bun run build:all
 npm pack
-opencode plugin "$(pwd)/opencode-usage-monitor-2.0.0.tgz" --global --force
+opencode plugin "$(pwd)/opencode-usage-monitor-2.0.1.tgz" --global --force
 ```
 
 This updates both server and TUI plugin entries when the OpenCode CLI supports the plugin installer. If your OpenCode build does not support `opencode plugin`, add the built package or tarball path manually to your OpenCode config instead.
