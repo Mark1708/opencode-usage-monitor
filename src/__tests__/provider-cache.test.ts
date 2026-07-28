@@ -22,9 +22,11 @@ import {
   CACHE_V2_SCHEMA_VERSION,
   type CacheV2Target,
   createProviderCacheV2,
-} from "../cache-v2.js";
+} from "../provider-cache.js";
 import type { CacheScopeMetadata } from "../providers/contracts.js";
 import type { StandardUsageProvider } from "../providers/types.js";
+
+const ACCOUNT_SCOPE = "11111111-1111-4111-8111-111111111111";
 
 const scope = (
   accountId = "account-1",
@@ -39,6 +41,7 @@ const target = (
   providerId: "zai",
   generation: 1,
   credentialEpoch: 1,
+  accountScope: ACCOUNT_SCOPE,
   scope: cacheScope,
   ...overrides,
 });
@@ -51,7 +54,14 @@ const snapshot = (
   id,
   displayName: id,
   status,
-  windows: [{ id: "quota", label: "quota", kind: "monthly", percentage: value }],
+  windows: [{
+    id: "quota",
+    label: "quota",
+    kind: "monthly",
+    period: { kind: "calendar", unit: "month" },
+    usage: { kind: "percent", usedPercent: value },
+    percentage: value,
+  }],
   fetchedAt: 1_700_000_000_000,
 });
 
@@ -59,7 +69,7 @@ describe("provider cache v2", () => {
   let baseDir: string;
 
   beforeEach(() => {
-    baseDir = join(mkdtempSync(join(tmpdir(), "usage-monitor-cache-v2-")), "cache");
+    baseDir = join(mkdtempSync(join(tmpdir(), "usage-monitor-cache-")), "cache");
   });
 
   afterEach(() => {
@@ -168,11 +178,11 @@ describe("provider cache v2", () => {
     const cache = createProviderCacheV2({ baseDir });
     const secretKey = {
       ...snapshot(),
-      additionalProperties: { nested: { access_token: "ordinary-value" } },
+      details: [{ key: "access_token", label: "ordinary", value: { kind: "text", value: "ordinary-value" }, visibility: "detail" }],
     } satisfies StandardUsageProvider;
     const secretValue = {
       ...snapshot(),
-      additionalProperties: { nested: ["Bearer abcdefghijklmnopqrstuvwxyz"] },
+      details: [{ key: "safe", label: "safe", value: { kind: "text", value: "Bearer abcdefghijklmnopqrstuvwxyz" }, visibility: "detail" }],
     } satisfies StandardUsageProvider;
 
     expect(cache.write(target(), secretKey)).toEqual({ status: "rejected", diagnostic: "snapshot-invalid" });
@@ -191,7 +201,7 @@ describe("provider cache v2", () => {
     for (const [index, key] of secretKeys.entries()) {
       const unsafe = {
         ...snapshot(),
-        additionalProperties: { safe: [{ nested: { [key]: `ordinary-value-${index}` } }] },
+        details: [{ key, label: "safe", value: { kind: "text", value: `ordinary-value-${index}` }, visibility: "detail" }],
       } satisfies StandardUsageProvider;
       expect(cache.write(target(scope(`account-${index}`)), unsafe)).toEqual({
         status: "rejected",
@@ -235,8 +245,37 @@ describe("provider cache v2", () => {
     });
   });
 
+  test("totally rejects bigint, accessor, proxy, nonplain, and oversized cache scopes", () => {
+    const cache = createProviderCacheV2({ baseDir });
+    const accessorScope = Object.defineProperty({}, "accountId", {
+      enumerable: true,
+      get: () => { throw new Error("scope getter invoked"); },
+    });
+    const proxyScope = new Proxy(scope(), {
+      getOwnPropertyDescriptor: () => { throw new Error("scope proxy invoked"); },
+    });
+    const oversizedShape = Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`field${index}`, index]));
+    const hostileScopes: readonly unknown[] = [
+      { accountId: "account", credentialVariant: "fixture", dataShape: { plan: 1n } },
+      accessorScope,
+      proxyScope,
+      new Date(0),
+      scope("x".repeat(513)),
+      { accountId: "account", credentialVariant: "fixture", dataShape: oversizedShape },
+    ];
+
+    for (const hostileScope of hostileScopes) {
+      const hostileTarget = { ...target(), scope: hostileScope };
+      expect(() => Reflect.apply(cache.read, cache, [hostileTarget])).not.toThrow();
+      expect(Reflect.apply(cache.read, cache, [hostileTarget])).toEqual({
+        status: "invalid",
+        diagnostic: "cache-invalid-input",
+      });
+    }
+  });
+
   test("rejects an absolute base directory outside the trusted temporary directory", () => {
-    const untrustedBaseDir = join(process.cwd(), "cache-v2-untrusted");
+    const untrustedBaseDir = join(process.cwd(), "cache-untrusted");
     const cache = createProviderCacheV2({ baseDir: untrustedBaseDir });
 
     expect(cache.read(target())).toEqual({ status: "invalid", diagnostic: "cache-invalid-input" });
@@ -271,10 +310,35 @@ describe("provider cache v2", () => {
     const cache = createProviderCacheV2({ baseDir });
     const oversized = { ...snapshot(), statusText: "x".repeat(300_000) } satisfies StandardUsageProvider;
     const deepValue = nestedValue(20);
-    const deep = { ...snapshot(), additionalProperties: { deepValue } } satisfies StandardUsageProvider;
+    const deep = {
+      ...snapshot(),
+      details: [{ key: "deep", label: "deep", value: deepValue, visibility: "detail" }],
+    } as unknown as StandardUsageProvider;
 
     expect(cache.write(target(), oversized)).toEqual({ status: "rejected", diagnostic: "snapshot-invalid" });
     expect(cache.write(target(), deep)).toEqual({ status: "rejected", diagnostic: "snapshot-invalid" });
+  });
+
+  test("rejects snapshots with throwing enumerable getters or proxy traps without throwing", () => {
+    const cache = createProviderCacheV2({ baseDir });
+    const throwingGetter = Object.defineProperty({ ...snapshot() }, "windows", {
+      enumerable: true,
+      get: () => { throw new Error("getter invoked"); },
+    });
+    const throwingProxy = new Proxy(snapshot(), {
+      ownKeys: () => { throw new Error("proxy invoked"); },
+    });
+
+    expect(() => Reflect.apply(cache.write, cache, [target(), throwingGetter])).not.toThrow();
+    expect(Reflect.apply(cache.write, cache, [target(), throwingGetter])).toEqual({
+      status: "rejected",
+      diagnostic: "snapshot-invalid",
+    });
+    expect(() => Reflect.apply(cache.write, cache, [target(), throwingProxy])).not.toThrow();
+    expect(Reflect.apply(cache.write, cache, [target(), throwingProxy])).toEqual({
+      status: "rejected",
+      diagnostic: "snapshot-invalid",
+    });
   });
 
   test("uses unique atomic temporary files and leaves no orphans after repeated writes", async () => {

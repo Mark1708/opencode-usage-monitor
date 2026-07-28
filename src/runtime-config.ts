@@ -131,12 +131,12 @@ async function readOmoConfig(
 ): Promise<ValidationResult<ResolvedUsageConfigV2>> {
   const source = await safelyRead(readText, path);
   if (!source.ok) return source;
-  if (!source.value.exists) return parseUsageConfigV2({ version: 2, providers: {} });
+  if (!source.value.exists) return failure("config", "Usage monitor config file not found");
   const parsed = parseJson(source.value.text, "usage_monitor");
   if (!parsed.ok) return parsed;
   if (!isObject(parsed.value)) return failure("usage_monitor", "OMO config must be an object");
   const section = parsed.value.usage_monitor;
-  if (section === undefined) return parseUsageConfigV2({ version: 2, providers: {} });
+  if (section === undefined) return failure("usage_monitor", "usage_monitor config section is required");
   return parseUsageConfigV2(section);
 }
 

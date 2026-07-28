@@ -20,37 +20,26 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { CacheDataShape, CacheScopeMetadata } from "./providers/contracts.js";
-import type {
-  StandardModelBreakdown,
-  StandardUsageAlert,
-  StandardUsageProvider,
-  StandardUsageWindow,
-} from "./providers/types.js";
-import { hasSecretPattern, looksSecretKey } from "./sanitize.js";
+import type { StandardUsageProvider } from "./providers/types.js";
+import { hasSecretPattern } from "./sanitize.js";
+import { isSecretBearingKey, validateAndCloneUsageSnapshot } from "./snapshot-validation.js";
 
 export const CACHE_V2_SCHEMA_VERSION = 2;
 
 const DEFAULT_BASE_DIR = join(tmpdir(), "opencode-usage-monitor-v2");
 const MAX_FILE_BYTES = 512 * 1024;
-const MAX_SNAPSHOT_BYTES = 256 * 1024;
 const MAX_TEMPORARY_FILE_AGE_MS = 5 * 60 * 1_000;
-const MAX_VALUE_DEPTH = 10;
-const MAX_VALUE_NODES = 5_000;
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+const ACCOUNT_SCOPE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const VARIANT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/;
 const SHAPE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/;
 const TEMPORARY_FILE_PATTERN = /^[a-z][a-z0-9-]{0,63}-[a-f0-9]{64}\.json\.tmp-[A-Za-z0-9-]+$/;
-const SUCCESS_STATUSES = new Set<StandardUsageProvider["status"]>(["ready", "partial"]);
-const WINDOW_KINDS = new Set<StandardUsageWindow["kind"]>([
-  "rolling", "daily", "weekly", "monthly", "billing", "tokens",
-  "requests", "credits", "cost", "unknown",
-]);
-const SEVERITIES = new Set(["normal", "warning", "critical", "muted"]);
 
 export type CacheV2Target = Readonly<{
   providerId: string;
   generation: number;
   credentialEpoch: number;
+  accountScope: string;
   scope: CacheScopeMetadata | null;
 }>;
 
@@ -76,7 +65,14 @@ type ValidatedTarget = Readonly<{
   providerId: string;
   generation: number;
   credentialEpoch: number;
+  accountScope: string;
   scopeDigest: string | null;
+}>;
+
+export type ValidatedCacheScope = Readonly<{
+  scope: CacheScopeMetadata;
+  canonical: string;
+  identity: string;
 }>;
 
 type PersistedEnvelope = Readonly<{
@@ -88,7 +84,6 @@ type PersistedEnvelope = Readonly<{
   snapshot: StandardUsageProvider;
 }>;
 
-type JsonValidation = Readonly<{ ok: true; nodes: number }> | Readonly<{ ok: false }>;
 
 export function createProviderCacheV2(options: ProviderCacheV2Options = {}): ProviderCacheV2 {
   const baseDir = options.baseDir ?? DEFAULT_BASE_DIR;
@@ -133,8 +128,9 @@ function writeEntry(
 ): CacheV2WriteResult {
   const validated = validateTarget(baseDir, target);
   if (!validated) return { status: "rejected", diagnostic: "cache-invalid-input" };
-  const frozen = validateAndCloneSnapshot(snapshot, validated.providerId);
-  if (!frozen) return { status: "rejected", diagnostic: "snapshot-invalid" };
+  const validation = validateAndCloneUsageSnapshot(snapshot, validated.providerId);
+  if (!validation.ok) return { status: "rejected", diagnostic: "snapshot-invalid" };
+  const frozen = validation.snapshot;
   if (!validated.scopeDigest) {
     memory.set(memoryKey(validated), frozen);
     return { status: "written", storage: "memory" };
@@ -147,42 +143,87 @@ function writeEntry(
 }
 
 function validateTarget(baseDir: string, target: CacheV2Target): ValidatedTarget | null {
-  if (!isTrustedBaseDir(baseDir) || !PROVIDER_ID_PATTERN.test(target.providerId)) return null;
-  if (!isSafeCounter(target.generation) || !isSafeCounter(target.credentialEpoch)) return null;
-  if (target.scope === null) return { ...target, scopeDigest: null };
-  const canonical = canonicalScope(target.providerId, target.scope);
-  if (!canonical) return null;
-  return {
-    providerId: target.providerId,
-    generation: target.generation,
-    credentialEpoch: target.credentialEpoch,
-    scopeDigest: createHash("sha256").update(canonical).digest("hex"),
-  };
+  try {
+    if (!isTrustedBaseDir(baseDir) || !PROVIDER_ID_PATTERN.test(target.providerId)) return null;
+    if (!isSafeCounter(target.generation) || !isSafeCounter(target.credentialEpoch)) return null;
+    if (!ACCOUNT_SCOPE_PATTERN.test(target.accountScope)) return null;
+    if (target.scope === null) return { ...target, scopeDigest: null };
+    const validatedScope = validateCacheScope(target.providerId, target.scope);
+    if (!validatedScope) return null;
+    return {
+      providerId: target.providerId,
+      generation: target.generation,
+      credentialEpoch: target.credentialEpoch,
+      accountScope: target.accountScope,
+      scopeDigest: createHash("sha256").update(validatedScope.canonical).digest("hex"),
+    };
+  } catch (_error: unknown) {
+    return null;
+  }
 }
 
-function canonicalScope(providerId: string, scope: CacheScopeMetadata): string | null {
-  if (!isSafeIdentity(scope.accountId, 512)) return null;
-  if (!VARIANT_PATTERN.test(scope.credentialVariant) || hasSecretPattern(scope.credentialVariant)) return null;
-  const entries = canonicalShape(scope.dataShape);
-  if (!entries) return null;
-  return JSON.stringify([
-    providerId,
-    CACHE_V2_SCHEMA_VERSION,
-    scope.accountId,
-    scope.credentialVariant,
-    entries,
-  ]);
+export function validateCacheScope(providerId: string, value: unknown): ValidatedCacheScope | null {
+  try {
+    if (!PROVIDER_ID_PATTERN.test(providerId) || !isPlainRecord(value)) return null;
+    const fields = readDataProperties(value, ["accountId", "credentialVariant", "dataShape"]);
+    if (!fields) return null;
+    const { accountId, credentialVariant, dataShape } = fields;
+    if (typeof accountId !== "string" || !isSafeIdentity(accountId, 512)) return null;
+    if (typeof credentialVariant !== "string" || !VARIANT_PATTERN.test(credentialVariant)) return null;
+    if (hasSecretPattern(credentialVariant)) return null;
+    const shape = canonicalShape(dataShape);
+    if (!shape) return null;
+    const detachedScope = Object.freeze({ accountId, credentialVariant, dataShape: shape.dataShape });
+    const canonical = JSON.stringify([
+      providerId, CACHE_V2_SCHEMA_VERSION, accountId, credentialVariant, shape.entries,
+    ]);
+    return Object.freeze({ scope: detachedScope, canonical, identity: canonical });
+  } catch (_error: unknown) {
+    return null;
+  }
 }
 
-function canonicalShape(shape: CacheDataShape): readonly (readonly [string, string | number | boolean])[] | null {
+function canonicalShape(shape: unknown): Readonly<{
+  dataShape: CacheDataShape;
+  entries: readonly (readonly [string, string | number | boolean])[];
+}> | null {
   if (!isPlainRecord(shape)) return null;
-  const entries = Object.entries(shape);
+  const descriptors = Object.getOwnPropertyDescriptors(shape);
+  if (Reflect.ownKeys(descriptors).some((key) => typeof key === "symbol")) return null;
+  const entries = Object.entries(descriptors);
   if (entries.length > 32) return null;
-  const valid = entries.every(([key, value]) => isSafeShapeEntry(key, value));
-  if (!valid) return null;
-  return entries
+  const values = entries.map(([key, descriptor]) => [key, dataPropertyValue(descriptor)] as const);
+  if (!values.every(([key, value]) => isSafeShapeEntry(key, value))) return null;
+  const safeValues = values.flatMap(([key, value]) => isSafeShapeEntry(key, value)
+    ? [Object.freeze([key, value] as const)]
+    : []);
+  const sorted = safeValues
     .map(([key, value]) => Object.freeze([key, value] as const))
     .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  return Object.freeze({ dataShape: Object.freeze(Object.fromEntries(sorted)), entries: Object.freeze(sorted) });
+}
+
+function readDataProperties(
+  value: Readonly<Record<string, unknown>>,
+  expectedKeys: readonly string[],
+): Readonly<Record<string, unknown>> | null {
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== expectedKeys.length || keys.some((key) => typeof key !== "string" || !expectedKeys.includes(key))) {
+    return null;
+  }
+  const properties = keys.flatMap((key) => typeof key === "string"
+    ? [[key, dataPropertyValue(descriptors[key])] as const]
+    : []);
+  return properties.some(([, property]) => property === INVALID_PROPERTY)
+    ? null
+    : Object.freeze(Object.fromEntries(properties));
+}
+
+const INVALID_PROPERTY = Symbol("invalid-property");
+
+function dataPropertyValue(descriptor: PropertyDescriptor | undefined): unknown {
+  return descriptor?.enumerable && "value" in descriptor ? descriptor.value : INVALID_PROPERTY;
 }
 
 function isSafeShapeEntry(key: string, value: unknown): value is string | number | boolean {
@@ -215,11 +256,9 @@ function isSafeCounter(value: number): boolean {
 }
 
 function memoryKey(target: ValidatedTarget): string {
-  return JSON.stringify([
-    target.providerId,
-    target.credentialEpoch,
-    target.scopeDigest,
-  ]);
+  return target.scopeDigest === null
+    ? JSON.stringify([target.providerId, target.accountScope, target.credentialEpoch])
+    : JSON.stringify([target.providerId, target.scopeDigest]);
 }
 
 function isTrustedBaseDir(baseDir: string): boolean {
@@ -247,9 +286,9 @@ function readPersistent(baseDir: string, target: ValidatedTarget): CacheV2ReadRe
     if (!matchesEnvelope(envelope, target.providerId, digest)) {
       return { status: "invalid", diagnostic: "cache-invalid" };
     }
-    const snapshot = validateAndCloneSnapshot(envelope.snapshot, target.providerId);
-    if (!snapshot) return { status: "invalid", diagnostic: "cache-invalid" };
-    return { status: "hit", snapshot, storage: "persistent" };
+    const validation = validateAndCloneUsageSnapshot(envelope.snapshot, target.providerId);
+    if (!validation.ok) return { status: "invalid", diagnostic: "cache-invalid" };
+    return { status: "hit", snapshot: validation.snapshot, storage: "persistent" };
   } catch (error: unknown) {
     return isMissingFileError(error)
       ? { status: "miss", diagnostic: "cache-miss" }
@@ -432,174 +471,6 @@ function isMissingFileError(error: unknown): boolean {
   return error instanceof Error
     && "code" in error
     && Reflect.get(error, "code") === "ENOENT";
-}
-
-function validateAndCloneSnapshot(
-  snapshot: StandardUsageProvider,
-  providerId: string,
-): StandardUsageProvider | null {
-  const serialized = safelySerialize(snapshot);
-  if (!serialized || Buffer.byteLength(serialized) > MAX_SNAPSHOT_BYTES) return null;
-  if (!validateJsonValue(snapshot, 0, 0).ok) return null;
-  if (!isSuccessfulSnapshot(snapshot, providerId)) return null;
-  const cloned: unknown = JSON.parse(serialized);
-  if (!isSuccessfulSnapshot(cloned, providerId)) return null;
-  return deepFreeze(cloned);
-}
-
-function safelySerialize(value: unknown): string | null {
-  try {
-    const serialized = JSON.stringify(value);
-    return typeof serialized === "string" ? serialized : null;
-  } catch {
-    return null;
-  }
-}
-
-function validateJsonValue(value: unknown, depth: number, nodes: number): JsonValidation {
-  if (depth > MAX_VALUE_DEPTH || nodes >= MAX_VALUE_NODES) return { ok: false };
-  if (value === null || typeof value === "boolean") return { ok: true, nodes: nodes + 1 };
-  if (typeof value === "number") return Number.isFinite(value) ? { ok: true, nodes: nodes + 1 } : { ok: false };
-  if (typeof value === "string") {
-    return hasSecretPattern(value) ? { ok: false } : { ok: true, nodes: nodes + 1 };
-  }
-  if (Array.isArray(value)) return validateJsonArray(value, depth, nodes + 1);
-  if (isPlainRecord(value)) return validateJsonRecord(value, depth, nodes + 1);
-  return { ok: false };
-}
-
-function validateJsonArray(values: readonly unknown[], depth: number, nodes: number): JsonValidation {
-  let result: JsonValidation = { ok: true, nodes };
-  for (const value of values) {
-    if (!result.ok) return result;
-    result = validateJsonValue(value, depth + 1, result.nodes);
-  }
-  return result;
-}
-
-function validateJsonRecord(value: Readonly<Record<string, unknown>>, depth: number, nodes: number): JsonValidation {
-  let result: JsonValidation = { ok: true, nodes };
-  for (const [key, entry] of Object.entries(value)) {
-    if (isSecretBearingKey(key) || !result.ok) return { ok: false };
-    result = validateJsonValue(entry, depth + 1, result.nodes);
-  }
-  return result;
-}
-
-function isSecretBearingKey(key: string): boolean {
-  const normalized = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
-  return looksSecretKey(key)
-    || [
-      "token", "secret", "credential", "password", "session", "cookie",
-      "authorization", "privatekey", "clientsecret",
-    ].some((fragment) => normalized.includes(fragment));
-}
-
-function isSuccessfulSnapshot(value: unknown, providerId: string): value is StandardUsageProvider {
-  if (!isPlainRecord(value) || value.id !== providerId || !isSuccessStatus(value.status)) {
-    return false;
-  }
-  if (!isBoundedString(value.displayName, 128) || !Array.isArray(value.windows)) return false;
-  if (!value.windows.every(isUsageWindow) || !isPositiveFiniteNumber(value.fetchedAt)) return false;
-  if (value.errorMessage !== undefined) return false;
-  if (!isOptionalBoundedString(value.statusText, 1_024) || !isOptionalBoundedString(value.plan, 256)) return false;
-  if (!isOptionalFiniteNumber(value.staleAt) || !isOptionalFiniteNumber(value.lastGoodAt)) return false;
-  if (value.additionalProperties !== undefined && !isPlainRecord(value.additionalProperties)) return false;
-  if (value.alerts !== undefined && (!Array.isArray(value.alerts) || !value.alerts.every(isUsageAlert))) return false;
-  if (value.modelBreakdown !== undefined && (!Array.isArray(value.modelBreakdown) || !value.modelBreakdown.every(isModelBreakdown))) return false;
-  return providerKeysAreKnown(value);
-}
-
-function isUsageWindow(value: unknown): value is StandardUsageWindow {
-  if (!isPlainRecord(value)) return false;
-  if (!isBoundedString(value.id, 256) || !isBoundedString(value.label, 256)) return false;
-  if (typeof value.kind !== "string" || !WINDOW_KINDS.has(value.kind as StandardUsageWindow["kind"])) return false;
-  if (!optionalNumbersAreFinite(value, [
-    "percentage", "used", "limit", "remaining", "currentValue", "resetAt",
-  ])) return false;
-  if (!isOptionalBoundedString(value.unitLabel, 128)) return false;
-  if (!isOptionalBoundedString(value.resetLabel, 512) || !isOptionalBoundedString(value.budgetLabel, 512)) return false;
-  if (value.limitReached !== undefined && typeof value.limitReached !== "boolean") return false;
-  if (value.severity !== undefined && !isSeverity(value.severity)) return false;
-  if (value.additionalProperties !== undefined && !isPlainRecord(value.additionalProperties)) return false;
-  if (!windowKeysAreKnown(value)) return false;
-  return value.summaryDetails === undefined || isBoundedStringArray(value.summaryDetails, 512);
-}
-
-function isUsageAlert(value: unknown): value is StandardUsageAlert {
-  return isPlainRecord(value)
-    && isBoundedString(value.id, 256)
-    && isBoundedString(value.label, 512)
-    && isSeverity(value.severity)
-    && (value.additionalProperties === undefined || isPlainRecord(value.additionalProperties))
-    && keysAreAllowed(value, ["id", "label", "severity", "additionalProperties"]);
-}
-
-function isModelBreakdown(value: unknown): value is StandardModelBreakdown {
-  return isPlainRecord(value)
-    && isBoundedString(value.id, 256)
-    && isBoundedString(value.label, 512)
-    && optionalNumbersAreFinite(value, ["percentage", "used", "costUsd", "requests"])
-    && isOptionalBoundedString(value.unitLabel, 128)
-    && (value.severity === undefined || isSeverity(value.severity))
-    && (value.additionalProperties === undefined || isPlainRecord(value.additionalProperties))
-    && keysAreAllowed(value, [
-      "id", "label", "percentage", "used", "unitLabel", "costUsd", "requests",
-      "severity", "additionalProperties",
-    ]);
-}
-
-function optionalNumbersAreFinite(value: Readonly<Record<string, unknown>>, keys: readonly string[]): boolean {
-  return keys.every((key) => isOptionalFiniteNumber(value[key]));
-}
-
-function isOptionalFiniteNumber(value: unknown): boolean {
-  return value === undefined || (typeof value === "number" && Number.isFinite(value));
-}
-
-function isPositiveFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
-}
-
-function isSuccessStatus(value: unknown): value is "ready" | "partial" {
-  return typeof value === "string" && SUCCESS_STATUSES.has(value as StandardUsageProvider["status"]);
-}
-
-function isSeverity(value: unknown): boolean {
-  return typeof value === "string" && SEVERITIES.has(value);
-}
-
-function isBoundedString(value: unknown, maxLength: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
-}
-
-function isOptionalBoundedString(value: unknown, maxLength: number): boolean {
-  return value === undefined || isBoundedString(value, maxLength);
-}
-
-function isBoundedStringArray(value: unknown, maxLength: number): boolean {
-  return Array.isArray(value) && value.every((entry) => isBoundedString(entry, maxLength));
-}
-
-function windowKeysAreKnown(value: Readonly<Record<string, unknown>>): boolean {
-  return keysAreAllowed(value, [
-    "id", "label", "kind", "percentage", "used", "limit", "remaining",
-    "currentValue", "unitLabel", "resetAt", "resetLabel", "budgetLabel",
-    "limitReached", "severity", "summaryDetails", "additionalProperties",
-  ]);
-}
-
-function keysAreAllowed(value: Readonly<Record<string, unknown>>, allowed: readonly string[]): boolean {
-  const allowedKeys = new Set(allowed);
-  return Object.keys(value).every((key) => allowedKeys.has(key));
-}
-
-function providerKeysAreKnown(value: Readonly<Record<string, unknown>>): boolean {
-  const allowed = new Set([
-    "id", "displayName", "status", "statusText", "plan", "windows", "alerts",
-    "modelBreakdown", "additionalProperties", "fetchedAt", "staleAt", "lastGoodAt",
-  ]);
-  return Object.keys(value).every((key) => allowed.has(key));
 }
 
 function deepFreeze<T>(value: T): T {
