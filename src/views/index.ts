@@ -1,12 +1,14 @@
 import type { StandardUsageProvider } from "../providers/types.js";
 import type { ProviderUsageView } from "./types.js";
 import { openAIProviderToView } from "./openai-view.js";
+import { opencodeGoProviderToView } from "./opencode-go-view.js";
 import { zaiProviderToView } from "./zai-view.js";
 import { deepseekProviderToView } from "./deepseek-view.js";
 import { metricSummary, statusView, stringMetric, toViewStatus, windowMetric } from "./common.js";
 
 export function providerToView(provider: StandardUsageProvider): ProviderUsageView {
   if (provider.id === "openai") return openAIProviderToView(provider);
+  if (provider.id === "opencode-go") return opencodeGoProviderToView(provider);
   if (provider.id === "zai") return zaiProviderToView(provider);
   if (provider.id === "deepseek") return deepseekProviderToView(provider);
 

@@ -36,6 +36,7 @@ Provider-specific code lives under `src/providers/`:
 - `openai.ts`: ChatGPT WHAM subscription quota provider.
 - `zai.ts`: Z.AI / Zhipu quota provider.
 - `deepseek.ts`: DeepSeek balance provider.
+- `opencode-go.ts`: OpenCode Go usage provider.
 - `registry.ts`: adapter resolution for legacy consumers.
 - `types.ts`: shared normalized provider and runtime-facing types.
 
@@ -58,7 +59,7 @@ Snapshot validation rejects unsafe or non-canonical data before publication or c
 
 `credentials.ts` resolves credentials through provider-specific allowlists. Credential leases carry an epoch and safe account metadata so refresh work can reject stale completions after credential changes.
 
-OpenAI requires top-level OpenCode OAuth metadata: `type: "oauth"`, `access`, `accountId`, and `expires`. Z.AI / Zhipu and DeepSeek can use OpenCode auth entries or supported environment variables. Refresh-only OpenCode entries are treated as missing secrets.
+OpenAI requires top-level OpenCode OAuth metadata: `type: "oauth"`, `access`, `accountId`, and `expires`. Z.AI / Zhipu and DeepSeek can use OpenCode auth entries or supported environment variables. OpenCode Go uses the `opencode-go` auth entry or `OPENCODE_API_KEY`. Refresh-only OpenCode entries are treated as missing secrets.
 
 `provider-cache.ts` separates persistent cache identity by provider, account-safe scope, credential variant, and options. Entries without a validated account scope stay memory-only. Cache files are written through private directories, schema validation, digest checks, and atomic temp-file replacement.
 
@@ -94,6 +95,15 @@ DeepSeek uses `GET https://api.deepseek.com/user/balance` with `Authorization: B
 - `granted_balance` and `topped_up_balance` map to expanded detail rows.
 - `is_available=false` remains visible without inventing reset semantics.
 - DeepSeek does not emit fake windows because the API exposes balance, not quota reset periods.
+
+### OpenCode Go
+
+OpenCode Go uses the first-party, currently undocumented `GET https://opencode.ai/zen/go/v1/usage` endpoint with `Authorization: Bearer <token>`. Its response contract is not publicly documented as stable.
+
+- The `rolling`, `weekly`, and `monthly` usage objects map to 5h, week, and month canonical windows. Weekly windows reset at the UTC week boundary; monthly windows reset on the subscription-anchored billing cycle.
+- `percent` maps to percent usage and `resetsAt` to the window reset time.
+- `status="rate-limited"` or a percentage of at least 100 maps to a reached limit.
+- Missing usage windows map to `partial`.
 
 ## 7. Rendering rules
 
