@@ -29,9 +29,13 @@ import type {
 } from "./types.js";
 
 const OPENAI_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const OPENAI_RESET_CREDITS_URL =
+	"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const statusProvider = createStatusProvider("openai", "openai");
 
-export type OpenAIOptions = Readonly<Record<string, never>>;
+export type OpenAIOptions = Readonly<{
+	show_resets: boolean;
+}>;
 
 type RateWindow = {
 	usedPercent?: number;
@@ -46,6 +50,7 @@ type ParsedWhamUsage = {
 	secondary?: RateWindow;
 	limitReached?: boolean;
 	additionalLimits: Array<{ label: string; limitReached: boolean }>;
+	availableResetCount?: number;
 	properties: Record<string, unknown>;
 };
 
@@ -58,7 +63,10 @@ export const openaiProviderDefinition = defineProvider<OpenAIOptions>({
 			baseUrls: ["https://chatgpt.com"],
 			documentationUrl:
 				"https://github.com/chopratejas/headroom/blob/master/headroom/subscription/codex_rate_limits.py",
-			endpoints: [{ method: "GET", path: "/backend-api/wham/usage" }],
+			endpoints: [
+				{ method: "GET", path: "/backend-api/wham/usage" },
+				{ method: "GET", path: "/backend-api/wham/rate-limit-reset-credits" },
+			],
 		},
 	},
 	credentialPolicy: {
@@ -112,7 +120,18 @@ async function fetchOpenAIUsage(
 			return statusProvider("forbidden", "forbidden");
 		if (!response.ok) return statusProvider("error", `api ${response.status}`);
 
-		return normalizeWhamUsage(await response.json());
+		const usage = await response.json();
+		const parsedUsage = parseWhamUsage(usage);
+		if (!context.options.show_resets || parsedUsage.availableResetCount === undefined) {
+			return normalizeWhamUsage(usage, Date.now(), undefined, false);
+		}
+
+		const nearestResetExpiryMs = await fetchNearestResetExpiry(
+			context.credential.secret,
+			accountId,
+			controller.signal,
+		);
+		return normalizeWhamUsage(usage, Date.now(), nearestResetExpiryMs);
 	} catch (error: unknown) {
 		const message = context.signal.aborted
 			? "cancelled"
@@ -122,6 +141,24 @@ async function fetchOpenAIUsage(
 		return statusProvider("error", message);
 	} finally {
 		controller.dispose();
+	}
+}
+
+async function fetchNearestResetExpiry(
+	secret: string,
+	accountId: string,
+	signal: AbortSignal,
+): Promise<number | undefined> {
+	try {
+		const response = await fetch(OPENAI_RESET_CREDITS_URL, {
+			headers: createOpenAIHeaders(secret, accountId),
+			signal,
+		});
+		if (!response.ok) return undefined;
+		return nearestAvailableResetExpiry(await response.json());
+	} catch (_error: unknown) {
+		// Reset details are supplemental; usage summary remains valid without them.
+		return undefined;
 	}
 }
 
@@ -151,7 +188,7 @@ function resolveLegacyOpenAIContext(
 		};
 	return {
 		ok: true as const,
-		options: {},
+		options: { show_resets: true },
 		fetchContext: {
 			credential: {
 				secret: credential.token,
@@ -174,10 +211,16 @@ function parseOpenAIOptions(input: unknown): ValidationResult<OpenAIOptions> {
 	if (typeof input !== "object" || input === null || Array.isArray(input)) {
 		return invalidOptions("options", "options must be an object");
 	}
-	const unknownKey = Object.keys(input)[0];
-	return unknownKey
-		? invalidOptions(unknownKey, "unknown option")
-		: { ok: true, value: Object.freeze({}) };
+	const options = input as Record<string, unknown>;
+	const unknownKey = Object.keys(options).find((key) => key !== "show_resets");
+	if (unknownKey) return invalidOptions(unknownKey, "unknown option");
+	if (options.show_resets !== undefined && typeof options.show_resets !== "boolean") {
+		return invalidOptions("show_resets", "must be a boolean");
+	}
+	return {
+		ok: true,
+		value: Object.freeze({ show_resets: options.show_resets ?? true }),
+	};
 }
 
 function invalidOptions<T>(path: string, message: string): ValidationResult<T> {
@@ -188,6 +231,8 @@ function invalidOptions<T>(path: string, message: string): ValidationResult<T> {
 export function normalizeWhamUsage(
 	raw: unknown,
 	nowMs: number = Date.now(),
+	nearestResetExpiryMs?: number,
+	showResets = true,
 ): StandardUsageProvider {
 	const parsed = parseWhamUsage(raw);
 	const windows = [
@@ -219,7 +264,7 @@ export function normalizeWhamUsage(
 		}));
 
 	const status = windows.length > 0 ? "ready" : "partial";
-	const details = whamDetails(parsed);
+	const details = whamDetails(parsed, nowMs, nearestResetExpiryMs, showResets);
 	return {
 		id: "openai",
 		displayName: "openai",
@@ -242,6 +287,7 @@ function parseWhamUsage(raw: unknown): ParsedWhamUsage {
 		secondary: parseRateWindow(rateLimit.secondary_window),
 		limitReached: rateLimit.limit_reached === true,
 		additionalLimits: parseAdditionalLimits(data.additional_rate_limits),
+		availableResetCount: parseAvailableResetCount(data.rate_limit_reset_credits),
 		properties: collectWhamProperties(data),
 	};
 }
@@ -285,19 +331,59 @@ function rateWindowToStandard(
 	return { ...standard, severity: getWindowSeverity(standard) };
 }
 
-function whamDetails(parsed: ParsedWhamUsage) {
+function whamDetails(
+	parsed: ParsedWhamUsage,
+	nowMs: number,
+	nearestResetExpiryMs?: number,
+	showResets = true,
+) {
 	const details = [
 		parsed.plan
 			? { key: "plan", label: "plan", value: { kind: "text" as const, value: parsed.plan }, visibility: "detail" as const, priority: 100 }
+			: undefined,
+		showResets
+			? resetDetail(parsed.availableResetCount, nearestResetExpiryMs, nowMs)
 			: undefined,
 		stringDetail("credits-balance", "credits balance", parsed.properties.creditsBalance, 90),
 		booleanDetail("credits-has", "has credits", parsed.properties.creditsHas ?? parsed.properties.creditsHas_credits, 80),
 		booleanDetail("credits-unlimited", "unlimited credits", parsed.properties.creditsUnlimited, 70),
 		numberDetail("spend-limit", "spend limit", parsed.properties.spendControlIndividualLimit ?? parsed.properties.spendControlIndividual_limit, 60),
-		numberDetail("reset-credits", "reset credits", parsed.properties.rateLimitResetCreditsAvailable_count, 50),
 		arrayDetail("approx-local", "approx local", parsed.properties.creditsApproxLocalMessages ?? parsed.properties.creditsApprox_local_messages, 40),
 	];
 	return details.filter((detail): detail is NonNullable<typeof detail> => detail !== undefined);
+}
+
+function resetDetail(
+	availableCount: number | undefined,
+	nearestExpiryMs: number | undefined,
+	nowMs: number,
+) {
+	if (availableCount === undefined) return undefined;
+	const remainingExpiryMs = nearestExpiryMs === undefined
+		? undefined
+		: nearestExpiryMs - nowMs;
+	const expiresInDays = remainingExpiryMs === undefined
+		? undefined
+		: Math.max(0, Math.ceil(remainingExpiryMs / 86_400_000));
+	return {
+		key: "resets",
+		label: "resets",
+		value: {
+			kind: "text" as const,
+			value: `${availableCount}${expiresInDays === undefined ? "" : ` · expires ${expiresInDays}d`}`,
+		},
+		visibility: "summary" as const,
+		priority: 95,
+		...(remainingExpiryMs === undefined
+			? {}
+			: { tone: resetExpiryTone(remainingExpiryMs) }),
+	};
+}
+
+function resetExpiryTone(remainingMs: number): "normal" | "warn" | "bad" {
+	if (remainingMs <= 2 * 3_600_000) return "bad";
+	if (remainingMs <= 24 * 3_600_000) return "warn";
+	return "normal";
 }
 
 function stringDetail(key: string, label: string, value: unknown, priority: number) {
@@ -329,12 +415,33 @@ function collectWhamProperties(
 ): Record<string, unknown> {
 	const credits = asRecord(data.credits);
 	const spendControl = asRecord(data.spend_control);
-	const resetCredits = asRecord(data.rate_limit_reset_credits);
 	return {
 		...flattenObject("credits", credits),
 		...flattenObject("spendControl", spendControl),
-		...flattenObject("rateLimitResetCredits", resetCredits),
 	};
+}
+
+function parseAvailableResetCount(raw: unknown): number | undefined {
+	const availableCount = readNumber(asRecord(raw)?.available_count);
+	return availableCount !== undefined
+		&& Number.isInteger(availableCount)
+		&& availableCount >= 0
+		? availableCount
+		: undefined;
+}
+
+function nearestAvailableResetExpiry(raw: unknown): number | undefined {
+	const credits = asRecord(raw)?.credits;
+	if (!Array.isArray(credits)) return undefined;
+	const expiries = credits.flatMap((credit) => {
+		const data = asRecord(credit);
+		if (data?.status !== "available" || typeof data.expires_at !== "string") {
+			return [];
+		}
+		const expiryMs = Date.parse(data.expires_at);
+		return Number.isFinite(expiryMs) ? [expiryMs] : [];
+	});
+	return expiries.length > 0 ? Math.min(...expiries) : undefined;
 }
 
 function parseAdditionalLimits(
