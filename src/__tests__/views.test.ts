@@ -200,6 +200,29 @@ describe("vertical usage view spec", () => {
 		);
 	});
 
+	test("11b. compactSummary prefers reached windows", () => {
+		expect(
+			compactSummary([
+				{
+					key: "window-5h",
+					label: "5h",
+					value: "9%",
+					priority: 80,
+					compact: true,
+					tone: "good",
+				},
+				{
+					key: "window-week",
+					label: "week",
+					value: "100%",
+					priority: 79,
+					compact: true,
+					tone: "bad",
+				},
+			]),
+		).toBe("week 100%");
+	});
+
 	test("11d. window-less balance providers show summary metrics without details toggle", () => {
 		const view = providerToView(normalizeDeepseekBalance({
 			is_available: true,

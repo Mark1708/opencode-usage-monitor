@@ -198,6 +198,9 @@ export function compactSummary(metrics: UsageMetric[]): string | undefined {
 				candidate.detailOnly !== true,
 		)
 		.sort((left, right) => right.priority - left.priority);
+	const reachedMetric = windowMetrics.find(
+		(candidate) => candidate.tone === "bad",
+	);
 	const priorityMetric = COMPACT_SUMMARY_WINDOW_PRIORITY.map((label) =>
 		windowMetrics.find((candidate) => candidate.label === label),
 	).find((candidate): candidate is UsageMetric => candidate !== undefined);
@@ -209,7 +212,7 @@ export function compactSummary(metrics: UsageMetric[]): string | undefined {
 				candidate.detailOnly !== true,
 		)
 		.sort((left, right) => right.priority - left.priority);
-	const metric = priorityMetric ?? windowMetrics[0] ?? summaryMetrics[0];
+	const metric = reachedMetric ?? priorityMetric ?? windowMetrics[0] ?? summaryMetrics[0];
 	if (metric === undefined) return undefined;
 	const { main } = splitMetricValue(metric.value);
 	return `${metric.label} ${main.split(" · ")[0] ?? main}`;
