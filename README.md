@@ -154,7 +154,8 @@ Full documented shape:
   },
   "providers": {
     "openai": {
-      "credential": { "source": "opencode", "entry": "openai" }
+      "credential": { "source": "opencode", "entry": "openai" },
+      "options": { "show_resets": true }
     },
     "zai": {
       "credential": { "source": "opencode", "entry": "zai-coding-plan" },
@@ -185,6 +186,8 @@ $.openai.type == "oauth"
 ```
 
 The auth file is discovered using OS-neutral OpenCode data paths, starting with `${XDG_DATA_HOME}/opencode/auth.json` and falling back to `~/.local/share/opencode/auth.json`, legacy config locations, and Windows local/roaming app data paths. `OPENAI_API_KEY` and `OPENAI_ADMIN_KEY` are not used for subscription quota.
+
+For subscriptions eligible for Codex banked resets, `providers.openai.options.show_resets` defaults to `true`. The OpenAI usage response supplies the available count; the plugin then reads reset details to show the nearest expiration when available, for example `resets 2 · expires 5d`. The reset line is normal above 24h, warning at 24h or less, and critical at 2h or less; its `expires` suffix remains muted, like other reset suffixes. Set `show_resets` to `false` to suppress the reset line and its additional request. Accounts without the reset-credit summary do not make that request.
 
 ### Z.AI and GLM
 

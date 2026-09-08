@@ -9,6 +9,7 @@ import {
 import { normalizeWhamUsage, openAIUsageAdapter, openaiProviderDefinition } from "../providers/openai.js";
 import { normalizeZaiQuota, zaiUsageAdapter } from "../providers/zai.js";
 import { validateAndCloneUsageSnapshot } from "../snapshot-validation.js";
+import { formatProviderMetrics, formatProviderMetricsForState } from "../format.js";
 import { providerToView } from "../views/index.js";
 import {
 	captureRequest,
@@ -19,6 +20,7 @@ import {
 	openAiFixture,
 	renderedMetrics,
 	restoreFetch,
+	TEST_WIDTH,
 	withoutUsageEnv,
 	zaiFixture,
 } from "./_helpers.js";
@@ -84,6 +86,142 @@ describe("provider normalization", () => {
 		expect(captured.headers.Referer).toBe("https://chatgpt.com/");
 	});
 
+	test("OpenAI displays available resets and their nearest expiration", async () => {
+		const requests: string[] = [];
+		const usage = {
+			...(openAiFixture() as Record<string, unknown>),
+			rate_limit_reset_credits: { available_count: 2 },
+		};
+		const expiresAt = new Date(Date.now() + 5 * 86_400_000).toISOString();
+		globalThis.fetch = ((input: RequestInfo | URL) => {
+			requests.push(typeof input === "string" ? input : input.toString());
+			const body = requests.length === 1
+				? usage
+				: { credits: [{ status: "available", expires_at: expiresAt }] };
+			return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+		}) as typeof fetch;
+
+		const provider = await openaiProviderDefinition.fetchUsage(
+			openAIRequestContext(true),
+		);
+
+		expect(requests).toEqual([
+			"https://chatgpt.com/backend-api/wham/usage",
+			"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",
+		]);
+		expect(provider.status).toBe("ready");
+		expect(
+			formatProviderMetrics(
+				providerToView(provider),
+				CONFIG_DEFAULTS,
+				TEST_WIDTH,
+			).find((line) => line.text.includes("resets")),
+		).toMatchObject({ text: "    resets  2", suffix: "expires 5d" });
+	});
+
+	test("OpenAI omits reset details request for accounts without reset eligibility", async () => {
+		const requests: string[] = [];
+		globalThis.fetch = ((input: RequestInfo | URL) => {
+			requests.push(typeof input === "string" ? input : input.toString());
+			return Promise.resolve(new Response(JSON.stringify(openAiFixture()), { status: 200 }));
+		}) as typeof fetch;
+
+		const provider = await openaiProviderDefinition.fetchUsage(
+			openAIRequestContext(true),
+		);
+
+		expect(requests).toEqual(["https://chatgpt.com/backend-api/wham/usage"]);
+		expect(renderedMetrics(provider)).not.toContain("resets");
+	});
+
+	test("OpenAI show_resets=false preserves usage rendering without a details request", async () => {
+		const requests: string[] = [];
+		const usage = {
+			...(openAiFixture() as Record<string, unknown>),
+			rate_limit_reset_credits: { available_count: 2 },
+		};
+		globalThis.fetch = ((input: RequestInfo | URL) => {
+			requests.push(typeof input === "string" ? input : input.toString());
+			return Promise.resolve(new Response(JSON.stringify(usage), { status: 200 }));
+		}) as typeof fetch;
+
+		const provider = await openaiProviderDefinition.fetchUsage(
+			openAIRequestContext(false),
+		);
+
+		expect(requests).toEqual(["https://chatgpt.com/backend-api/wham/usage"]);
+		expect(renderedMetrics(provider)).not.toContain("resets");
+	});
+
+	test("OpenAI keeps reset count when reset detail endpoint fails", async () => {
+		let calls = 0;
+		const usage = {
+			...(openAiFixture() as Record<string, unknown>),
+			rate_limit_reset_credits: { available_count: 2 },
+		};
+		globalThis.fetch = ((() => {
+			calls += 1;
+			return Promise.resolve(new Response(JSON.stringify(calls === 1 ? usage : {}), {
+				status: calls === 1 ? 200 : 503,
+			}));
+		}) as unknown) as typeof fetch;
+
+		const provider = await openaiProviderDefinition.fetchUsage(
+			openAIRequestContext(true),
+		);
+
+		expect(provider.status).toBe("ready");
+		expect(renderedMetrics(provider)).toContain("resets  2");
+		expect(renderedMetrics(provider)).not.toContain("expires");
+	});
+
+	test("OpenAI keeps reset count when available reset details omit expiration", async () => {
+		let calls = 0;
+		const usage = {
+			...(openAiFixture() as Record<string, unknown>),
+			rate_limit_reset_credits: { available_count: 2 },
+		};
+		globalThis.fetch = ((() => {
+			calls += 1;
+			const body = calls === 1
+				? usage
+				: { credits: [{ status: "available", expires_at: null }] };
+			return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+		}) as unknown) as typeof fetch;
+
+		const provider = await openaiProviderDefinition.fetchUsage(
+			openAIRequestContext(true),
+		);
+
+		expect(provider.status).toBe("ready");
+		expect(renderedMetrics(provider)).toContain("resets  2");
+		expect(renderedMetrics(provider)).not.toContain("expires");
+	});
+
+	test.each([
+		["normal after 24h", 24 * 3_600_000 + 1, "normal"],
+		["warning at 24h", 24 * 3_600_000, "warning"],
+		["critical at 2h", 2 * 3_600_000, "critical"],
+	] as const)("OpenAI reset expiration is %s", (_name, remainingMs, expectedSeverity) => {
+		const now = Date.now();
+		const provider = normalizeWhamUsage(
+			{
+				...(openAiFixture() as Record<string, unknown>),
+				rate_limit_reset_credits: { available_count: 2 },
+			},
+			now,
+			now + remainingMs,
+		);
+		const resetLine = formatProviderMetricsForState(
+			providerToView(provider),
+			CONFIG_DEFAULTS,
+			TEST_WIDTH,
+			false,
+		).find((line) => line.text.includes("resets"));
+
+		expect(resetLine?.severity).toBe(expectedSeverity);
+	});
+
 	test("OpenAI partial endpoint data does not crash", () => {
 		const provider = normalizeWhamUsage(
 			{ plan_type: "prolite", credits: { balance: "1" } },
@@ -115,12 +253,27 @@ describe("provider normalization", () => {
 				epoch: 1,
 				metadata: { accountId: "account-123", type: "oauth", expires: String(Date.now() + 60_000) },
 			},
-			options: {},
+			options: { show_resets: true },
 			signal: new AbortController().signal,
 			timeoutMs: CONFIG_DEFAULTS.request_timeout_ms,
 		});
 
 		expect(result).toMatchObject({ status: "error", statusText: "invalid credential source" });
+	});
+
+	test("OpenAI reset option defaults to enabled and requires a boolean", () => {
+		expect(openaiProviderDefinition.parseOptions({})).toEqual({
+			ok: true,
+			value: { show_resets: true },
+		});
+		expect(openaiProviderDefinition.parseOptions({ show_resets: false })).toEqual({
+			ok: true,
+			value: { show_resets: false },
+		});
+		expect(openaiProviderDefinition.parseOptions({ show_resets: "false" })).toEqual({
+			ok: false,
+			issues: [{ path: "show_resets", message: "must be a boolean" }],
+		});
 	});
 
 	test("Z.AI quota with 3 limits returns standard windows and model breakdown", () => {
@@ -182,6 +335,25 @@ describe("provider normalization", () => {
 		expect(validateAndCloneUsageSnapshot(provider, "zai")).toMatchObject({ ok: true });
 	});
 });
+
+function openAIRequestContext(showResets: boolean) {
+	return {
+		credential: {
+			secret: "oauth-access",
+			source: "opencode" as const,
+			variant: "openai",
+			epoch: 1,
+			metadata: {
+				accountId: "account-123",
+				type: "oauth",
+				expires: String(Date.now() + 60_000),
+			},
+		},
+		options: { show_resets: showResets },
+		signal: new AbortController().signal,
+		timeoutMs: CONFIG_DEFAULTS.request_timeout_ms,
+	};
+}
 
 describe("deepseek balance provider", () => {
 	test("normalizeDeepseekBalance maps CNY total to summary details without fake windows", () => {
