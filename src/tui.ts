@@ -1,5 +1,5 @@
 import { type FSWatcher, watch } from "node:fs";
-import type { TuiPluginModule } from "@opencode-ai/plugin/tui";
+import type { Plugin } from "@opencode/plugin/tui";
 import type { JSX } from "@opentui/solid";
 import { createElement, insert, setProp } from "@opentui/solid";
 import { createSignal } from "solid-js";
@@ -29,6 +29,8 @@ import {
 } from "./refresh.js";
 import { readUsageConfigV2 } from "./runtime-config.js";
 import { sanitizeError } from "./sanitize.js";
+import { createV2OpenCodeCredentialReader } from "./auth-v2.js";
+import type { CredentialSourceReaders } from "./credentials.js";
 import { providerToView } from "./views/index.js";
 import type { ProviderUsageView, TextTheme } from "./views/types.js";
 
@@ -54,7 +56,7 @@ function element(
 		if (child !== null && child !== undefined && child !== false)
 			insert(node, child);
 	}
-	return node as JSX.Element;
+	return node as unknown as JSX.Element;
 }
 
 function text(props: Record<string, unknown>, children: Child[]): JSX.Element {
@@ -296,11 +298,14 @@ async function readRuntimeConfig(): Promise<RuntimeConfig> {
 	return configErrorRuntime(message);
 }
 
-function createRuntimeCoordinator(config: ResolvedUsageConfigV2): RefreshCoordinator {
+function createRuntimeCoordinator(
+	config: ResolvedUsageConfigV2,
+	credentialReaders?: CredentialSourceReaders,
+): RefreshCoordinator {
 	return createRefreshCoordinator({
 		providers: config.providers,
 		policy: config.refresh,
-		credentialResolver: createCredentialResolver(),
+		credentialResolver: createCredentialResolver(credentialReaders),
 		cache: createProviderCacheV2(),
 	});
 }
@@ -404,9 +409,28 @@ function formatConfigIssues(issues: readonly { path: string; message: string }[]
 	return issues.slice(0, 3).map((issue) => `${issue.path}: ${issue.message}`).join("; ");
 }
 
-const plugin: TuiPluginModule & { id: string } = {
-	id: "usage-monitor:tui",
-	tui: async (api, _options, _meta) => {
+type TuiContext = Parameters<Plugin.Definition["setup"]>[0];
+
+type ResolvedThemeLike = {
+	text: { base: unknown; muted: unknown; feedback: { warning: { base: unknown }; error: { base: unknown } } };
+	background: { base: unknown };
+	border: { base: unknown };
+};
+
+function textThemeFrom(theme: ResolvedThemeLike): TextTheme {
+	return {
+		text: theme.text.base,
+		textMuted: theme.text.muted,
+		accent: theme.text.feedback.warning.base,
+		error: theme.text.feedback.error.base,
+		background: theme.background.base,
+		borderActive: theme.border.base,
+	};
+}
+
+const plugin: Plugin.Definition = {
+	id: "usage-monitor.tui",
+	async setup(context: TuiContext) {
 		const initialRuntime = await readRuntimeConfig();
 		if (initialRuntime.render.enabled === false) return;
 
@@ -427,13 +451,17 @@ const plugin: TuiPluginModule & { id: string } = {
 		>(new Set());
 		let configWatcher: FSWatcher | undefined;
 		let fingerprint = initialRuntime.fingerprint;
-		let unregisterRefreshCommand: (() => void) | undefined;
 		let providerCollapseInitialized = false;
+		const credentialReaders: CredentialSourceReaders = Object.freeze({
+			readOpenCodeEntry: createV2OpenCodeCredentialReader({
+				client: context.client,
+			}),
+			readEnv: (name: string) => process.env[name],
+		});
 		let coordinator = initialRuntime.config
-			? createRuntimeCoordinator(initialRuntime.config)
+			? createRuntimeCoordinator(initialRuntime.config, credentialReaders)
 			: undefined;
 
-		const requestRender = (): void => api.renderer.requestRender();
 		const setProvidersWithInitialCollapse = (
 			providers: Record<ProviderId, StandardUsageProvider>,
 		): void => {
@@ -450,7 +478,6 @@ const plugin: TuiPluginModule & { id: string } = {
 			setProvidersWithInitialCollapse(
 				runtimeStatesToProviders(states, getProviders()),
 			);
-			requestRender();
 		}) ?? (() => undefined);
 		setProvidersWithInitialCollapse(initialRuntime.providers);
 
@@ -466,7 +493,6 @@ const plugin: TuiPluginModule & { id: string } = {
 				coordinator = undefined;
 				unsubscribe = () => undefined;
 				setProvidersWithInitialCollapse(nextRuntime.providers);
-				requestRender();
 				return;
 			}
 			if (coordinator) {
@@ -475,17 +501,15 @@ const plugin: TuiPluginModule & { id: string } = {
 					nextRuntime.config.refresh,
 				);
 			} else {
-				coordinator = createRuntimeCoordinator(nextRuntime.config);
+				coordinator = createRuntimeCoordinator(nextRuntime.config, credentialReaders);
 				unsubscribe = coordinator.subscribe((states) => {
 					setProvidersWithInitialCollapse(
 						runtimeStatesToProviders(states, getProviders()),
 					);
-					requestRender();
 				});
 			}
 			setProvidersWithInitialCollapse(nextRuntime.providers);
 			void coordinator.refreshAll();
-			requestRender();
 		};
 
 		const debounceConfigReload = createDebounced(
@@ -500,13 +524,11 @@ const plugin: TuiPluginModule & { id: string } = {
 
 		const toggleCollapsed = (): void => {
 			setCollapsed(!getCollapsed());
-			requestRender();
 		};
 		const toggleProvider = (id: ProviderId): void => {
 			setCollapsedProviderIds(
 				toggleProviderCollapse(getCollapsedProviderIds(), id),
 			);
-			requestRender();
 		};
 		const toggleDetails = (id: ProviderId): void => {
 			const current = getExpandedDetailIds();
@@ -517,75 +539,82 @@ const plugin: TuiPluginModule & { id: string } = {
 				next.add(id);
 			}
 			setExpandedDetailIds(next);
-			requestRender();
 		};
 
 		void coordinator?.refreshAll();
-		api.lifecycle.onDispose(() => {
+
+		const theme = textThemeFrom(context.theme as unknown as ResolvedThemeLike);
+
+		const unregisterSlot = context.ui.slot({
+			append: "sidebar.content",
+			render: () => {
+				try {
+					return renderUsagePanel(
+						getConfig(),
+						getProviders(),
+						getCollapsed(),
+						getCollapsedProviderIds(),
+						getExpandedDetailIds(),
+						toggleCollapsed,
+						toggleProvider,
+						toggleDetails,
+						theme,
+					);
+				} catch (renderErr: unknown) {
+					return box({ width: "100%" }, [
+						text({ fg: theme.error ?? theme.textMuted }, [
+							`usage-monitor render error: ${String(renderErr).slice(0, 80)}`,
+						]),
+					]);
+				}
+			},
+		});
+
+		context.keymap.layer(() => {
+			const keybind = getConfig().refresh_keybind;
+			return {
+				mode: "global" as const,
+				commands: [
+					{
+						id: "usage-monitor.refresh",
+						title: "Refresh Usage Data",
+						description:
+							"Force refresh usage data from all providers",
+						group: "usage-monitor",
+						...(keybind ? { bind: keybind } : {}),
+						slash: { name: "usage-refresh" },
+						run: async () => {
+							try {
+								if (!coordinator)
+									throw new Error("usage monitor config is invalid");
+								await coordinator.refreshAll();
+								context.ui.toast.show({
+									title: "Usage Monitor",
+									message: "Usage data refreshed",
+									variant: "success",
+									duration: 2000,
+								});
+							} catch (error: unknown) {
+								context.ui.toast.show({
+									title: "Usage Monitor",
+									message: `Usage data refresh failed: ${sanitizeError(error)}`,
+									variant: "error",
+									duration: 2000,
+								});
+							}
+						},
+					},
+				],
+			};
+		});
+
+		return () => {
 			debounceConfigReload.cancel();
 			configWatcher?.close();
 			unsubscribe();
 			coordinator?.dispose();
-			unregisterRefreshCommand?.();
-		});
-
-		api.slots.register({
-			order: 840,
-			slots: {
-				sidebar_content() {
-					try {
-						return renderUsagePanel(
-							getConfig(),
-							getProviders(),
-							getCollapsed(),
-							getCollapsedProviderIds(),
-							getExpandedDetailIds(),
-							toggleCollapsed,
-							toggleProvider,
-							toggleDetails,
-							api.theme.current as TextTheme,
-						);
-					} catch (renderErr: unknown) {
-						const theme = api.theme.current as TextTheme;
-						return box({ width: "100%" }, [
-							text({ fg: theme.error ?? theme.textMuted }, [
-								`usage-monitor render error: ${String(renderErr).slice(0, 80)}`,
-							]),
-						]);
-					}
-				},
-			},
-		});
-
-		unregisterRefreshCommand = api.command?.register(() => [
-			{
-				title: "Refresh Usage Data",
-				value: "usage-monitor:refresh",
-				description: "Force refresh usage data from all providers",
-				category: "usage-monitor",
-				keybind: getConfig().refresh_keybind,
-				slash: { name: "usage-refresh" },
-				onSelect: async (_dialog) => {
-					try {
-						if (!coordinator) throw new Error("usage monitor config is invalid");
-						await coordinator.refreshAll();
-						api.ui.toast({
-							title: "Usage Monitor",
-							message: "Usage data refreshed",
-							variant: "success",
-							duration: 2000,
-						});
-					} catch (error: unknown) {
-						api.ui.toast({
-							title: "Usage Monitor",
-							message: `Usage data refresh failed: ${sanitizeError(error)}`,
-							variant: "error",
-							duration: 2000,
-						});
-					}
-				},
-			},
-		]);
+			unregisterSlot();
+		};
 	},
 };
 
