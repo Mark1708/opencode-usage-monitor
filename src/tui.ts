@@ -29,6 +29,8 @@ import {
 } from "./refresh.js";
 import { readUsageConfigV2 } from "./runtime-config.js";
 import { sanitizeError } from "./sanitize.js";
+import { createV2OpenCodeCredentialReader } from "./auth-v2.js";
+import type { CredentialSourceReaders } from "./credentials.js";
 import { providerToView } from "./views/index.js";
 import type { ProviderUsageView, TextTheme } from "./views/types.js";
 
@@ -296,11 +298,14 @@ async function readRuntimeConfig(): Promise<RuntimeConfig> {
 	return configErrorRuntime(message);
 }
 
-function createRuntimeCoordinator(config: ResolvedUsageConfigV2): RefreshCoordinator {
+function createRuntimeCoordinator(
+	config: ResolvedUsageConfigV2,
+	credentialReaders?: CredentialSourceReaders,
+): RefreshCoordinator {
 	return createRefreshCoordinator({
 		providers: config.providers,
 		policy: config.refresh,
-		credentialResolver: createCredentialResolver(),
+		credentialResolver: createCredentialResolver(credentialReaders),
 		cache: createProviderCacheV2(),
 	});
 }
@@ -447,8 +452,14 @@ const plugin: Plugin.Definition = {
 		let configWatcher: FSWatcher | undefined;
 		let fingerprint = initialRuntime.fingerprint;
 		let providerCollapseInitialized = false;
+		const credentialReaders: CredentialSourceReaders = Object.freeze({
+			readOpenCodeEntry: createV2OpenCodeCredentialReader({
+				client: context.client,
+			}),
+			readEnv: (name: string) => process.env[name],
+		});
 		let coordinator = initialRuntime.config
-			? createRuntimeCoordinator(initialRuntime.config)
+			? createRuntimeCoordinator(initialRuntime.config, credentialReaders)
 			: undefined;
 
 		const setProvidersWithInitialCollapse = (
@@ -490,7 +501,7 @@ const plugin: Plugin.Definition = {
 					nextRuntime.config.refresh,
 				);
 			} else {
-				coordinator = createRuntimeCoordinator(nextRuntime.config);
+				coordinator = createRuntimeCoordinator(nextRuntime.config, credentialReaders);
 				unsubscribe = coordinator.subscribe((states) => {
 					setProvidersWithInitialCollapse(
 						runtimeStatesToProviders(states, getProviders()),
