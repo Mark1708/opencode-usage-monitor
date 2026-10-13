@@ -43,8 +43,8 @@ The plugin renders inside the OpenCode terminal UI sidebar.
 ## Quick start
 
 ```sh
-# install the published OpenCode plugin globally
-opencode plugin opencode-usage-monitor@latest --global --force
+# OpenCode v2: register the TUI plugin in ~/.config/opencode/cli.json
+# (see "Installation" below)
 
 # optional: build from a local checkout for development
 git clone https://github.com/Mark1708/opencode-usage-monitor.git
@@ -55,13 +55,29 @@ bun run build:all
 
 ## Installation
 
-### OpenCode plugin install
+### OpenCode v2 (TUI plugin)
+
+The plugin is TUI-only. Register it once in `~/.config/opencode/cli.json`:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/v2/cli.json",
+  "plugins": ["opencode-usage-monitor@latest"]
+}
+```
+
+Alternatively, add `"opencode-usage-monitor@latest"` to `plugins` (v2 field
+name) in `opencode.json(c)`; the package ships a valid v2 server definition.
+
+### OpenCode v1
 
 ```sh
 opencode plugin opencode-usage-monitor@latest --global --force
 ```
 
-This is the recommended path for users because the plugin is published on npm and OpenCode can install it directly.
+Note: under OpenCode v2 the legacy `opencode plugin ... --global` command
+writes the v1 `plugin` field, and the v1-only server entrypoint fails to load
+on the v2 server runtime. Prefer the `cli.json` registration above.
 
 ### Package install for local development
 
