@@ -23,11 +23,11 @@
     "clean": "rm -rf dist .artifacts",
     "build:index": "bun build src/index.ts --outfile dist/index.js --target bun --format esm --external @opencode/plugin --external @opencode/plugin/tui --external @opencode/theme --external @opentui/core --external @opentui/solid --external solid-js",
     "build:tui": "bun build src/tui.ts --outfile dist/tui.js --target bun --format esm --external @opencode/plugin --external @opencode/plugin/tui --external @opencode/theme --external @opentui/core --external @opentui/solid --external solid-js",
-    "build:types": "bun x tsc --project tsconfig.build.json",
+    "build:types": "bun x tsc --project tsconfig.build.json && node scripts/prune-declarations.mjs",
     "build:all": "bun run clean && bun run build:types && bun run build:index && bun run build:tui",
     "test": "bun test",
     "typecheck": "bun x tsc --noEmit",
-    "typecheck:host": "bun --cwd .test-types/host-api run typecheck",
+    "typecheck:host": "bun run --cwd .test-types/host-api typecheck",
     "verify:package": "node scripts/verify-package.mjs",
     "prepublishOnly": "echo 'Skipping build -- CI already built dist/'"
   },

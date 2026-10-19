@@ -98,7 +98,29 @@ try {
       "solid-js": "1.9.12",
     },
     devDependencies: {
+      "@types/json-schema": "7.0.15",
+      "@types/node": "24.12.0",
       typescript: "5.9.3",
+    },
+    overrides: {
+      "@aws-sdk/client-cognito-identity": "3.1057.0",
+      "@aws-sdk/core": "3.978.3",
+      "@aws-sdk/credential-provider-cognito-identity": "3.972.73",
+      "@aws-sdk/credential-provider-env": "3.972.74",
+      "@aws-sdk/credential-provider-http": "3.972.76",
+      "@aws-sdk/credential-provider-ini": "3.973.19",
+      "@aws-sdk/credential-provider-login": "3.972.81",
+      "@aws-sdk/credential-provider-node": "3.972.86",
+      "@aws-sdk/credential-provider-process": "3.972.74",
+      "@aws-sdk/credential-provider-sso": "3.973.18",
+      "@aws-sdk/credential-provider-web-identity": "3.972.80",
+      "@aws-sdk/credential-providers": "3.1057.0",
+      "@aws-sdk/nested-clients": "3.997.48",
+      "@aws-sdk/signature-v4-multi-region": "3.996.48",
+      "@aws-sdk/token-providers": "3.1150.0",
+      "@aws-sdk/types": "3.974.6",
+      "@aws-sdk/util-locate-window": "3.965.10",
+      "@aws-sdk/xml-builder": "3.972.41",
     },
   }, null, 2));
   writeFileSync(join(consumerDir, "import-check.mjs"), `
@@ -120,19 +142,20 @@ void [serverId, tuiId, serverSetup, tuiSetup];
 `);
   writeFileSync(join(consumerDir, "tsconfig.json"), JSON.stringify({
     compilerOptions: {
-      target: "ES2022",
+      target: "ESNext",
       module: "ESNext",
       moduleResolution: "Bundler",
+      lib: ["ESNext", "DOM"],
       strict: true,
       skipLibCheck: false,
       noEmit: true,
-      types: [],
+      types: ["node"],
     },
     files: ["consumer.ts"],
   }, null, 2));
-  execFileSync("bun", ["install"], { cwd: consumerDir, stdio: "inherit" });
+  execFileSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: consumerDir, stdio: "inherit" });
   execFileSync("bun", ["run", "import-check.mjs"], { cwd: consumerDir, stdio: "inherit" });
-  execFileSync("bun", ["x", "tsc", "--project", "tsconfig.json"], { cwd: consumerDir, stdio: "inherit" });
+  execFileSync(join(consumerDir, "node_modules", ".bin", "tsc"), ["--project", "tsconfig.json"], { cwd: consumerDir, stdio: "inherit" });
 } finally {
   rmSync(consumerDir, { recursive: true, force: true });
 }

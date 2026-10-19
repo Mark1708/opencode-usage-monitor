@@ -1,7 +1,11 @@
 /// <reference types="bun" />
 
 import { describe, expect, test } from "bun:test";
-import { createEffect, createRoot, createSignal } from "solid-js";
+import {
+	createRenderEffect,
+	createRoot,
+	createSignal,
+} from "solid-js/dist/solid.js";
 
 import serverPlugin from "../index.js";
 
@@ -80,7 +84,20 @@ const resolvedConfig: ResolvedUsageConfigV2 = {
 	providers: [],
 };
 
-function theme(base: string) {
+type ResolvedTestTheme = Readonly<{
+	text: Readonly<{
+		base: string;
+		muted: string;
+		feedback: Readonly<{
+			warning: Readonly<{ base: string }>;
+			error: Readonly<{ base: string }>;
+		}>;
+	}>;
+	background: Readonly<{ base: string }>;
+	border: Readonly<{ base: string }>;
+}>;
+
+function theme(base: string): ResolvedTestTheme {
 	return {
 		text: {
 			base,
@@ -149,7 +166,13 @@ describe("TUI runtime cutover", () => {
 		let inserts = 0;
 		let containers = 0;
 		let rendered = "";
+		let container: unknown;
 		let click = (): void => undefined;
+		let publishProviders = (
+			_providers: Record<string, StandardUsageProvider>,
+		): void => undefined;
+		let setPanelCollapsed = (_collapsed: boolean): void => undefined;
+		let setPanelTheme = (_theme: ResolvedTestTheme): void => undefined;
 		createRoot((dispose) => {
 			disposeRoot = dispose;
 			const [getConfig] = createSignal({ ...CONFIG_DEFAULTS });
@@ -158,7 +181,10 @@ describe("TUI runtime cutover", () => {
 			const [getCollapsedProviders] = createSignal(new Set<string>());
 			const [getExpandedDetails] = createSignal(new Set<string>());
 			const [getTheme, setTheme] = createSignal(theme("light"));
-			const container = mountUsagePanel({
+			publishProviders = setProviders;
+			setPanelCollapsed = setCollapsed;
+			setPanelTheme = setTheme;
+			container = mountUsagePanel({
 				getConfig,
 				getProviders,
 				getCollapsed,
@@ -175,7 +201,7 @@ describe("TUI runtime cutover", () => {
 				},
 				insert: (_container, accessor) => {
 					inserts += 1;
-					createEffect(() => {
+					createRenderEffect(() => {
 						rendered = String(accessor());
 					});
 				},
@@ -185,19 +211,18 @@ describe("TUI runtime cutover", () => {
 				},
 				renderError: (message) => `error:${message}`,
 			});
-
-			expect(container).toEqual({ kind: "container" });
-			expect(rendered).toBe("|false|light");
-			setProviders({ deepseek: deepseekSnapshot });
-			expect(rendered).toBe("deepseek|false|light");
-			setCollapsed(true);
-			expect(rendered).toBe("deepseek|true|light");
-			setTheme(theme("dark"));
-			expect(rendered).toBe("deepseek|true|dark");
-			click();
-			expect(rendered).toBe("deepseek|false|dark");
 		});
 
+		expect(container).toEqual({ kind: "container" });
+		expect(rendered).toBe("|false|light");
+		publishProviders({ deepseek: deepseekSnapshot });
+		expect(rendered).toBe("deepseek|false|light");
+		setPanelCollapsed(true);
+		expect(rendered).toBe("deepseek|true|light");
+		setPanelTheme(theme("dark"));
+		expect(rendered).toBe("deepseek|true|dark");
+		click();
+		expect(rendered).toBe("deepseek|false|dark");
 		expect(containers).toBe(1);
 		expect(inserts).toBe(1);
 		disposeRoot();

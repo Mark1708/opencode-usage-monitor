@@ -19,7 +19,6 @@ function keyEntry(options: {
 	readonly integrationID?: typeof INTEGRATION_ID;
 	readonly active?: boolean;
 	readonly key?: string;
-	readonly metadata?: Readonly<Record<string, unknown>>;
 } = {}): V2CredentialEntry {
 	return {
 		id: Credential.ID.make(options.id ?? "cred_test"),
@@ -29,7 +28,7 @@ function keyEntry(options: {
 		value: {
 			type: "key",
 			key: options.key ?? ACTIVE_KEY,
-			metadata: options.metadata,
+			metadata: {},
 		},
 	};
 }
@@ -129,7 +128,7 @@ describe("createV2OpenCodeCredentialReader", () => {
 	test("coalesces concurrent reads and caches normalized projections within the TTL", async () => {
 		let calls = 0;
 		let now = 100;
-		const pending = deferred<readonly V2CredentialEntry[]>();
+		const pending = deferred<V2CredentialEntry[]>();
 		const client: V2CredentialClient = {
 			credential: {
 				list: async () => {
@@ -151,8 +150,8 @@ describe("createV2OpenCodeCredentialReader", () => {
 	});
 
 	test("invalidation detaches an old list so it cannot satisfy or cache a new resolve", async () => {
-		const oldList = deferred<readonly V2CredentialEntry[]>();
-		const newList = deferred<readonly V2CredentialEntry[]>();
+		const oldList = deferred<V2CredentialEntry[]>();
+		const newList = deferred<V2CredentialEntry[]>();
 		let calls = 0;
 		const client: V2CredentialClient = {
 			credential: {

@@ -1,5 +1,5 @@
-import { type FSWatcher, watch } from "node:fs";
-import type { Plugin } from "@opencode/plugin/tui";
+import { watch } from "node:fs";
+import { Plugin } from "@opencode/plugin/tui";
 import type { JSX } from "@opentui/solid";
 import { createElement, insert, setProp } from "@opentui/solid";
 import { createSignal } from "solid-js";
@@ -29,7 +29,11 @@ import {
 } from "./refresh.js";
 import { readUsageConfigV2 } from "./runtime-config.js";
 import { sanitizeError } from "./sanitize.js";
-import { createV2OpenCodeCredentialReader } from "./auth-v2.js";
+import {
+	createV2OpenCodeCredentialReader,
+	type V2CredentialClient,
+	type V2OpenCodeCredentialReader,
+} from "./auth-v2.js";
 import type { CredentialSourceReaders } from "./credentials.js";
 import { providerToView } from "./views/index.js";
 import type { ProviderUsageView, TextTheme } from "./views/types.js";
@@ -357,9 +361,11 @@ function runtimeStateToProvider(
 	const status =
 		state.status === "needs_auth"
 			? "missing-auth"
-			: state.status === "loading" || state.status === "refreshing"
-				? "loading"
-				: "error";
+			: state.status === "forbidden" || state.status === "unsupported"
+				? state.status
+				: state.status === "loading" || state.status === "refreshing"
+					? "loading"
+					: "error";
 	return {
 		id: state.id,
 		displayName: state.id,
@@ -409,10 +415,14 @@ function formatConfigIssues(issues: readonly { path: string; message: string }[]
 	return issues.slice(0, 3).map((issue) => `${issue.path}: ${issue.message}`).join("; ");
 }
 
-type TuiContext = Parameters<Plugin.Definition["setup"]>[0];
+type TuiContext = Plugin.Context;
 
 type ResolvedThemeLike = {
-	text: { base: unknown; muted: unknown; feedback: { warning: { base: unknown }; error: { base: unknown } } };
+	text: {
+		base: unknown;
+		muted: unknown;
+		feedback: { warning: { base: unknown }; error: { base: unknown } };
+	};
 	background: { base: unknown };
 	border: { base: unknown };
 };
@@ -428,201 +438,357 @@ function textThemeFrom(theme: ResolvedThemeLike): TextTheme {
 	};
 }
 
-const plugin: Plugin.Definition = {
-	id: "usage-monitor.tui",
-	async setup(context: TuiContext) {
-		const initialRuntime = await readRuntimeConfig();
-		if (initialRuntime.render.enabled === false) return;
+export type UsagePanelAccessors = Readonly<{
+	getConfig: () => Required<UsageMonitorConfig>;
+	getProviders: () => Record<ProviderId, StandardUsageProvider>;
+	getCollapsed: () => boolean;
+	getCollapsedProviderIds: () => ReadonlySet<ProviderId>;
+	getExpandedDetailIds: () => ReadonlySet<ProviderId>;
+	onToggleCollapsed: () => void;
+	onToggleProvider: (id: ProviderId) => void;
+	onToggleDetails: (id: ProviderId) => void;
+	getTheme: () => ResolvedThemeLike;
+}>;
 
-		const [getConfig, setConfig] = createSignal<Required<UsageMonitorConfig>>(
-			initialRuntime.render,
-		);
-		const [getProviders, setProviders] = createSignal<
-			Record<ProviderId, StandardUsageProvider>
-		>({});
-		const [getCollapsed, setCollapsed] = createSignal<boolean>(
-			initialRuntime.render.default_collapsed,
-		);
-		const [getCollapsedProviderIds, setCollapsedProviderIds] = createSignal<
-			Set<ProviderId>
-		>(new Set());
-		const [getExpandedDetailIds, setExpandedDetailIds] = createSignal<
-			Set<ProviderId>
-		>(new Set());
-		let configWatcher: FSWatcher | undefined;
-		let fingerprint = initialRuntime.fingerprint;
-		let providerCollapseInitialized = false;
-		const credentialReaders: CredentialSourceReaders = Object.freeze({
-			readOpenCodeEntry: createV2OpenCodeCredentialReader({
-				client: context.client,
-			}),
-			readEnv: (name: string) => process.env[name],
-		});
-		let coordinator = initialRuntime.config
-			? createRuntimeCoordinator(initialRuntime.config, credentialReaders)
-			: undefined;
+export type UsagePanelRenderInput = Readonly<{
+	config: Required<UsageMonitorConfig>;
+	providers: Record<ProviderId, StandardUsageProvider>;
+	collapsed: boolean;
+	collapsedProviderIds: ReadonlySet<ProviderId>;
+	expandedDetailIds: ReadonlySet<ProviderId>;
+	onToggleCollapsed: () => void;
+	onToggleProvider: (id: ProviderId) => void;
+	onToggleDetails: (id: ProviderId) => void;
+	theme: TextTheme;
+}>;
 
-		const setProvidersWithInitialCollapse = (
-			providers: Record<ProviderId, StandardUsageProvider>,
-		): void => {
-			setProviders(providers);
-			if (
-				providerCollapseInitialized ||
-				!getConfig().default_provider_collapsed
-			)
-				return;
-			providerCollapseInitialized = true;
-			setCollapsedProviderIds(new Set(Object.keys(providers)));
-		};
-		let unsubscribe = coordinator?.subscribe((states) => {
-			setProvidersWithInitialCollapse(
-				runtimeStatesToProviders(states, getProviders()),
+export interface UsagePanelMountAdapter<Node> {
+	createContainer(): Node;
+	insert(container: Node, accessor: () => unknown): void;
+	render(input: UsagePanelRenderInput): unknown;
+	renderError(message: string, theme: TextTheme): unknown;
+}
+
+const FALLBACK_TEXT_THEME: TextTheme = {
+	text: undefined,
+	textMuted: undefined,
+	accent: undefined,
+	error: undefined,
+	background: undefined,
+	borderActive: undefined,
+};
+
+const DEFAULT_MOUNT_ADAPTER: UsagePanelMountAdapter<JSX.Element> = {
+	createContainer: () => box({ width: "100%" }),
+	insert: (container, accessor) => {
+		insert(container, accessor);
+	},
+	render: (input) =>
+		renderUsagePanel(
+			input.config,
+			input.providers,
+			input.collapsed,
+			input.collapsedProviderIds,
+			input.expandedDetailIds,
+			input.onToggleCollapsed,
+			input.onToggleProvider,
+			input.onToggleDetails,
+			input.theme,
+		),
+	renderError: (message, theme) =>
+		box({ width: "100%" }, [
+			text({ fg: theme.error ?? theme.textMuted }, [
+				`usage-monitor render error: ${message}`,
+			]),
+		]),
+};
+
+export function mountUsagePanel<Node = JSX.Element>(
+	accessors: UsagePanelAccessors,
+	adapter: UsagePanelMountAdapter<Node> =
+		DEFAULT_MOUNT_ADAPTER as unknown as UsagePanelMountAdapter<Node>,
+): Node {
+	const container = adapter.createContainer();
+	adapter.insert(container, () => {
+		let theme = FALLBACK_TEXT_THEME;
+		try {
+			theme = textThemeFrom(accessors.getTheme());
+			return adapter.render({
+				config: accessors.getConfig(),
+				providers: accessors.getProviders(),
+				collapsed: accessors.getCollapsed(),
+				collapsedProviderIds: accessors.getCollapsedProviderIds(),
+				expandedDetailIds: accessors.getExpandedDetailIds(),
+				onToggleCollapsed: accessors.onToggleCollapsed,
+				onToggleProvider: accessors.onToggleProvider,
+				onToggleDetails: accessors.onToggleDetails,
+				theme,
+			});
+		} catch (error: unknown) {
+			return adapter.renderError(sanitizeError(error), theme);
+		}
+	});
+	return container;
+}
+
+type ConfigWatcher = Readonly<{ close(): void }>;
+type ReloadTrigger = (() => void) & Readonly<{ cancel(): void }>;
+
+type UsageTuiDependencies = Readonly<{
+	readRuntimeConfig: () => Promise<RuntimeConfig>;
+	createRuntimeCoordinator: (
+		config: ResolvedUsageConfigV2,
+		readers: CredentialSourceReaders,
+	) => RefreshCoordinator;
+	createCredentialReader: (
+		client: V2CredentialClient,
+	) => V2OpenCodeCredentialReader;
+	watchConfig: (callback: () => void) => ConfigWatcher | undefined;
+	createReloadTrigger: (callback: () => void) => ReloadTrigger;
+	mountPanel: (accessors: UsagePanelAccessors) => JSX.Element;
+}>;
+
+const DEFAULT_TUI_DEPENDENCIES: UsageTuiDependencies = {
+	readRuntimeConfig,
+	createRuntimeCoordinator,
+	createCredentialReader: (client) =>
+		createV2OpenCodeCredentialReader({ client }),
+	watchConfig: (callback) => {
+		try {
+			return watch(CONFIG_PATH, callback);
+		} catch {
+			return undefined;
+		}
+	},
+	createReloadTrigger: (callback) => createDebounced(callback, 100),
+	mountPanel: (accessors) => mountUsagePanel(accessors),
+};
+
+export function createUsageTuiDefinition(
+	overrides: Partial<UsageTuiDependencies> = {},
+): Plugin.Definition {
+	const dependencies: UsageTuiDependencies = {
+		...DEFAULT_TUI_DEPENDENCIES,
+		...overrides,
+	};
+	return Plugin.define({
+		id: "usage-monitor.tui",
+		async setup(context: TuiContext) {
+			const initialRuntime = await dependencies.readRuntimeConfig();
+			if (initialRuntime.render.enabled === false) return;
+
+			let disposed = false;
+			let reloadGeneration = 0;
+			const [getConfig, setConfig] = createSignal<Required<UsageMonitorConfig>>(
+				initialRuntime.render,
 			);
-		}) ?? (() => undefined);
-		setProvidersWithInitialCollapse(initialRuntime.providers);
+			const [getProviders, setProviders] = createSignal<
+				Record<ProviderId, StandardUsageProvider>
+			>({});
+			const [getCollapsed, setCollapsed] = createSignal<boolean>(
+				initialRuntime.render.default_collapsed,
+			);
+			const [getCollapsedProviderIds, setCollapsedProviderIds] = createSignal<
+				Set<ProviderId>
+			>(new Set());
+			const [getExpandedDetailIds, setExpandedDetailIds] = createSignal<
+				Set<ProviderId>
+			>(new Set());
+			let fingerprint = initialRuntime.fingerprint;
+			let providerCollapseInitialized = false;
+			const credentialReader = dependencies.createCredentialReader(context.client);
+			const credentialReaders: CredentialSourceReaders = Object.freeze({
+				readOpenCodeEntry: credentialReader,
+				readEnv: (name: string) => process.env[name],
+			});
+			let coordinator = initialRuntime.config
+				? dependencies.createRuntimeCoordinator(
+						initialRuntime.config,
+						credentialReaders,
+					)
+				: undefined;
 
-		const reloadConfig = async (): Promise<void> => {
-			const nextRuntime = await readRuntimeConfig();
-			const nextFingerprint = nextRuntime.fingerprint;
-			if (nextFingerprint === fingerprint) return;
-			fingerprint = nextFingerprint;
-			setConfig(nextRuntime.render);
-			if (!nextRuntime.config) {
-				unsubscribe();
-				coordinator?.dispose();
-				coordinator = undefined;
-				unsubscribe = () => undefined;
-				setProvidersWithInitialCollapse(nextRuntime.providers);
-				return;
-			}
-			if (coordinator) {
-				coordinator.reconfigure(
-					nextRuntime.config.providers,
-					nextRuntime.config.refresh,
-				);
-			} else {
-				coordinator = createRuntimeCoordinator(nextRuntime.config, credentialReaders);
-				unsubscribe = coordinator.subscribe((states) => {
+			const setProvidersWithInitialCollapse = (
+				providers: Record<ProviderId, StandardUsageProvider>,
+			): void => {
+				if (disposed) return;
+				setProviders(providers);
+				if (
+					providerCollapseInitialized ||
+					!getConfig().default_provider_collapsed
+				) {
+					return;
+				}
+				providerCollapseInitialized = true;
+				setCollapsedProviderIds(new Set(Object.keys(providers)));
+			};
+			const subscribe = (current: RefreshCoordinator): (() => void) =>
+				current.subscribe((states) => {
+					if (disposed) return;
 					setProvidersWithInitialCollapse(
 						runtimeStatesToProviders(states, getProviders()),
 					);
 				});
-			}
-			setProvidersWithInitialCollapse(nextRuntime.providers);
-			void coordinator.refreshAll();
-		};
+			let unsubscribe = coordinator
+				? subscribe(coordinator)
+				: () => undefined;
+			setProvidersWithInitialCollapse(initialRuntime.providers);
 
-		const debounceConfigReload = createDebounced(
-			() => void reloadConfig(),
-			100,
-		);
-		try {
-			configWatcher = watch(CONFIG_PATH, () => debounceConfigReload());
-		} catch {
-			configWatcher = undefined;
-		}
-
-		const toggleCollapsed = (): void => {
-			setCollapsed(!getCollapsed());
-		};
-		const toggleProvider = (id: ProviderId): void => {
-			setCollapsedProviderIds(
-				toggleProviderCollapse(getCollapsedProviderIds(), id),
-			);
-		};
-		const toggleDetails = (id: ProviderId): void => {
-			const current = getExpandedDetailIds();
-			const next = new Set(current);
-			if (next.has(id)) {
-				next.delete(id);
-			} else {
-				next.add(id);
-			}
-			setExpandedDetailIds(next);
-		};
-
-		void coordinator?.refreshAll();
-
-		const theme = textThemeFrom(context.theme as unknown as ResolvedThemeLike);
-
-		const unregisterSlot = context.ui.slot({
-			append: "sidebar.content",
-			render: () => {
-				try {
-					return renderUsagePanel(
-						getConfig(),
-						getProviders(),
-						getCollapsed(),
-						getCollapsedProviderIds(),
-						getExpandedDetailIds(),
-						toggleCollapsed,
-						toggleProvider,
-						toggleDetails,
-						theme,
-					);
-				} catch (renderErr: unknown) {
-					return box({ width: "100%" }, [
-						text({ fg: theme.error ?? theme.textMuted }, [
-							`usage-monitor render error: ${String(renderErr).slice(0, 80)}`,
-						]),
-					]);
+			const reloadConfig = async (): Promise<void> => {
+				const requestGeneration = ++reloadGeneration;
+				const nextRuntime = await dependencies.readRuntimeConfig();
+				if (disposed || requestGeneration !== reloadGeneration) return;
+				if (nextRuntime.fingerprint === fingerprint) return;
+				fingerprint = nextRuntime.fingerprint;
+				setConfig(nextRuntime.render);
+				if (!nextRuntime.config) {
+					unsubscribe();
+					coordinator?.dispose();
+					coordinator = undefined;
+					unsubscribe = () => undefined;
+					setProvidersWithInitialCollapse(nextRuntime.providers);
+					return;
 				}
-			},
-		});
-
-		context.keymap.layer(() => {
-			const keybind = getConfig().refresh_keybind;
-			return {
-				mode: "global" as const,
-				commands: [
-					{
-						id: "usage-monitor.refresh",
-						title: "Refresh Usage Data",
-						description:
-							"Force refresh usage data from all providers",
-						group: "usage-monitor",
-						...(keybind ? { bind: keybind } : {}),
-						slash: { name: "usage-refresh" },
-						run: async () => {
-							try {
-								if (!coordinator)
-									throw new Error("usage monitor config is invalid");
-								await coordinator.refreshAll();
-								context.ui.toast.show({
-									title: "Usage Monitor",
-									message: "Usage data refreshed",
-									variant: "success",
-									duration: 2000,
-								});
-							} catch (error: unknown) {
-								context.ui.toast.show({
-									title: "Usage Monitor",
-									message: `Usage data refresh failed: ${sanitizeError(error)}`,
-									variant: "error",
-									duration: 2000,
-								});
-							}
-						},
-					},
-				],
+				if (coordinator) {
+					coordinator.reconfigure(
+						nextRuntime.config.providers,
+						nextRuntime.config.refresh,
+					);
+				} else {
+					if (disposed || requestGeneration !== reloadGeneration) return;
+					coordinator = dependencies.createRuntimeCoordinator(
+						nextRuntime.config,
+						credentialReaders,
+					);
+					if (disposed || requestGeneration !== reloadGeneration) {
+						coordinator.dispose();
+						coordinator = undefined;
+						return;
+					}
+					unsubscribe = subscribe(coordinator);
+				}
+				setProvidersWithInitialCollapse(nextRuntime.providers);
+				if (!disposed && requestGeneration === reloadGeneration) {
+					void coordinator.refreshAll();
+				}
 			};
-		});
 
-		return () => {
-			debounceConfigReload.cancel();
-			configWatcher?.close();
-			unsubscribe();
-			coordinator?.dispose();
-			unregisterSlot();
-		};
-	},
-};
+			const reloadTrigger = dependencies.createReloadTrigger(
+				() => void reloadConfig(),
+			);
+			const configWatcher = dependencies.watchConfig(reloadTrigger);
+
+			const toggleCollapsed = (): void => {
+				setCollapsed(!getCollapsed());
+			};
+			const toggleProvider = (id: ProviderId): void => {
+				setCollapsedProviderIds(
+					toggleProviderCollapse(getCollapsedProviderIds(), id),
+				);
+			};
+			const toggleDetails = (id: ProviderId): void => {
+				const current = getExpandedDetailIds();
+				const next = new Set(current);
+				if (next.has(id)) next.delete(id);
+				else next.add(id);
+				setExpandedDetailIds(next);
+			};
+
+			void coordinator?.refreshAll();
+			const unregisterSlot = context.ui.slot({
+				append: "sidebar.content",
+				render: () =>
+					dependencies.mountPanel({
+						getConfig,
+						getProviders,
+						getCollapsed,
+						getCollapsedProviderIds,
+						getExpandedDetailIds,
+						onToggleCollapsed: toggleCollapsed,
+						onToggleProvider: toggleProvider,
+						onToggleDetails: toggleDetails,
+						getTheme: () =>
+							context.theme as unknown as ResolvedThemeLike,
+					}),
+			});
+
+			const handleCredentialChange = (): void => {
+				if (disposed) return;
+				credentialReader.invalidate();
+				coordinator?.invalidateCredentials();
+				void coordinator?.refreshAll();
+			};
+			const unsubscribeCredentialUpdated = context.data.on(
+				"credential.updated",
+				handleCredentialChange,
+			);
+			const unsubscribeCredentialSwitched = context.data.on(
+				"credential.switched",
+				handleCredentialChange,
+			);
+
+			context.keymap.layer(() => {
+				const keybind = getConfig().refresh_keybind;
+				return {
+					mode: "global" as const,
+					commands: [
+						{
+							id: "usage-monitor.refresh",
+							title: "Refresh Usage Data",
+							description:
+								"Force refresh usage data from all providers",
+							group: "usage-monitor",
+							...(keybind ? { bind: keybind } : {}),
+							slash: { name: "usage-refresh" },
+							run: async () => {
+								try {
+									if (disposed || !coordinator) {
+										throw new Error("usage monitor config is invalid");
+									}
+									await coordinator.refreshAll();
+									context.ui.toast.show({
+										title: "Usage Monitor",
+										message: "Usage data refreshed",
+										variant: "success",
+										duration: 2000,
+									});
+								} catch (error: unknown) {
+									context.ui.toast.show({
+										title: "Usage Monitor",
+										message: `Usage data refresh failed: ${sanitizeError(error)}`,
+										variant: "error",
+										duration: 2000,
+									});
+								}
+							},
+						},
+					],
+				};
+			});
+
+			return () => {
+				if (disposed) return;
+				disposed = true;
+				reloadGeneration += 1;
+				reloadTrigger.cancel();
+				unregisterSlot();
+				unsubscribeCredentialUpdated();
+				unsubscribeCredentialSwitched();
+				configWatcher?.close();
+				unsubscribe();
+				coordinator?.dispose();
+			};
+		},
+	});
+}
+
+const plugin = createUsageTuiDefinition();
 
 function createDebounced(
 	callback: () => void,
 	delayMs: number,
 ): (() => void) & { cancel: () => void } {
-	let timer: ReturnType<typeof setTimeout> | undefined;
+	let timer: Parameters<typeof clearTimeout>[0] | undefined;
 	const debounced = (() => {
 		if (timer !== undefined) clearTimeout(timer);
 		timer = setTimeout(callback, delayMs);

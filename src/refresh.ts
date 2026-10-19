@@ -5,6 +5,7 @@ import type { StandardUsageProvider } from "./providers/types.js";
 import {
 	createSuccessfulFetchState,
 	prepareCompletedFetch,
+	type TerminalProviderStatus,
 	validateFetchResult,
 } from "./refresh-commit.js";
 import type {
@@ -99,6 +100,17 @@ class DeterministicRefreshCoordinator implements RefreshCoordinator {
 		const selected = this.providers.find((provider) => provider.id === id);
 		if (!selected?.ok) return;
 		await this.requestProvider(selected, this.generation);
+	}
+	invalidateCredentials(): void {
+		if (this.disposed) return;
+		this.abortAllOperations();
+		this.cancelTimer();
+		this.generation += 1;
+		this.operations = new Map();
+		this.invalidateResolutions();
+		this.contexts = createInitialContexts(this.providers);
+		this.states = createInitialStates(this.providers, this.generation);
+		this.emit();
 	}
 	reconfigure(
 		providers: readonly SelectedResolvedProvider[],
@@ -399,7 +411,11 @@ class DeterministicRefreshCoordinator implements RefreshCoordinator {
 	): void {
 		const valid = validateFetchResult(result, gate.id, credential);
 		if (!valid.ok) {
-			this.commitFetchFailure(valid.message, gate);
+			if (valid.status === "error") {
+				this.commitFetchFailure(valid.message, gate);
+			} else {
+				this.commitTerminalStatus(valid.status, valid.message, gate);
+			}
 			return;
 		}
 		const completedAt = this.now();
@@ -455,6 +471,31 @@ class DeterministicRefreshCoordinator implements RefreshCoordinator {
 			message: message || "Provider refresh failed",
 		});
 		this.replaceState(gate.id, next);
+	}
+	private commitTerminalStatus(
+		status: TerminalProviderStatus,
+		message: string,
+		gate: CommitGate,
+	): void {
+		if (!this.canCommit(gate)) return;
+		const completedAt = this.now();
+		const previous = this.states.get(gate.id);
+		this.replaceState(
+			gate.id,
+			freezeState({
+				...previous,
+				id: gate.id,
+				generation: gate.generation,
+				requestSequence: gate.requestSequence,
+				credentialEpoch: gate.credentialEpoch,
+				status: status === "missing-auth" ? "needs_auth" : status,
+				snapshot: undefined,
+				lastAttemptAt: completedAt,
+				lastSuccessAt: undefined,
+				nextDueAt: undefined,
+				message: message || "Provider authorization failed",
+			}),
+		);
 	}
 	private commitCredentialError(
 		id: string,

@@ -1,5 +1,5 @@
 import type { ResolvedRefreshConfigV2 } from "./config-types.js";
-import type { StandardUsageProvider } from "./providers/types.js";
+import type { ProviderStatus, StandardUsageProvider } from "./providers/types.js";
 import type { CommitGate } from "./refresh-contracts.js";
 import {
 	automaticDue,
@@ -16,9 +16,18 @@ import {
 type SuccessfulUsageProvider = StandardUsageProvider &
 	Readonly<{ status: "ready" | "partial" }>;
 
+export type TerminalProviderStatus = Extract<
+	ProviderStatus,
+	"missing-auth" | "forbidden" | "unsupported"
+>;
+
 type ValidFetchResult =
 	| Readonly<{ ok: true; result: SuccessfulUsageProvider }>
-	| Readonly<{ ok: false; message: string }>;
+	| Readonly<{
+			ok: false;
+			status: TerminalProviderStatus | "error";
+			message: string;
+	  }>;
 
 type CompletedFetch =
 	| Readonly<{ ok: true; snapshot: StandardUsageProvider }>
@@ -32,12 +41,19 @@ export function validateFetchResult(
 	if (isSuccessfulProviderResult(result, expectedProviderId)) {
 		return Object.freeze({ ok: true, result });
 	}
-	const message =
-		result.errorMessage ?? result.statusText ?? "Provider refresh failed";
-	return Object.freeze({
-		ok: false,
-		message: sanitizeProviderFailure(message, credential),
-	});
+	const message = sanitizeProviderFailure(
+		result.errorMessage ?? result.statusText ?? "Provider refresh failed",
+		credential,
+	);
+	if (
+		result.id === expectedProviderId &&
+		(result.status === "missing-auth" ||
+			result.status === "forbidden" ||
+			result.status === "unsupported")
+	) {
+		return Object.freeze({ ok: false, status: result.status, message });
+	}
+	return Object.freeze({ ok: false, status: "error", message });
 }
 
 function isSuccessfulProviderResult(
