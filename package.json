@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "opencode-usage-monitor",
-  "version": "2.0.1",
-  "description": "OpenCode TUI sidebar plugin that displays API usage quotas for OpenAI and Z.AI (GLM) providers",
+  "version": "3.0.0",
+  "description": "OpenCode v2 TUI sidebar plugin that displays API usage quotas for OpenAI, Z.AI (GLM), and DeepSeek providers",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

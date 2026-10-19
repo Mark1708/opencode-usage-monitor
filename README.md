@@ -13,10 +13,10 @@
 |---|---|
 | Status | Actively maintained personal OpenCode tool/plugin |
 | Type | OpenCode TUI plugin / host extension |
-| Host app | OpenCode `>= v1.14.49` documented; `@opencode-ai/plugin >=1.15.0` peer dependency |
-| Package | `opencode-usage-monitor` `2.0.1` package metadata |
-| Runtime | Bun `>= 1.1.0` documented for local development |
-| Maintainer checks | `bun install && bun run build:all && bun test && bun run typecheck` |
+| Host app | OpenCode v2; `2.0.32` is the release baseline |
+| Package | `opencode-usage-monitor` `3.0.0` |
+| Runtime | Bun `>= 1.3.0` for local development |
+| Maintainer checks | `bun install --frozen-lockfile && bun run typecheck && bun run typecheck:host && bun test && bun run build:all && bun run verify:package` |
 
 ## Screenshots
 
@@ -55,70 +55,61 @@ bun run build:all
 
 ## Installation
 
-### OpenCode v2 (TUI plugin)
+### OpenCode v2
 
-The plugin is TUI-only. Register it once in `~/.config/opencode/cli.json`:
+Install the release with the v2 plugin manager:
+
+```sh
+opencode plugin add opencode-usage-monitor@3.0.0
+```
+
+The equivalent explicit configuration is:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/v2/cli.json",
-  "plugins": ["opencode-usage-monitor@latest"]
+  "plugins": ["opencode-usage-monitor@3.0.0"]
 }
 ```
 
-Alternatively, add `"opencode-usage-monitor@latest"` to `plugins` (v2 field
-name) in `opencode.json(c)`; the package ships a valid v2 server definition.
+Add the package once, either to `~/.config/opencode/cli.json` or to the v2
+`plugins` field in `opencode.json(c)`. The package exports separate v2 server
+and TUI definitions.
 
-### OpenCode v1
-
-```sh
-opencode plugin opencode-usage-monitor@latest --global --force
-```
-
-Note: under OpenCode v2 the legacy `opencode plugin ... --global` command
-writes the v1 `plugin` field, and the v1-only server entrypoint fails to load
-on the v2 server runtime. Prefer the `cli.json` registration above.
+This major does not support OpenCode v1. V1 users must pin
+`opencode-usage-monitor@2.0.1`; there is no dual-runtime compatibility shim.
 
 ### Package install for local development
 
 ```sh
-bun add opencode-usage-monitor
+bun add opencode-usage-monitor@3.0.0
 ```
-
-Use this when you need the package in a local development workspace rather than installing it into OpenCode globally.
 
 ### Local checkout
 
 ```sh
 git clone https://github.com/Mark1708/opencode-usage-monitor.git
 cd opencode-usage-monitor
-bun install
+bun install --frozen-lockfile
 bun run build:all
+bun run verify:package
 ```
 
-The build emits the plugin entry and TUI bundle into `dist/`.
-
-### Local OpenCode install without npm publish
-
-For release-candidate testing, build and pack the local checkout, then install the generated tarball into the global OpenCode config:
-
-```sh
-bun run build:all
-npm pack
-opencode plugin "$(pwd)/opencode-usage-monitor-2.0.1.tgz" --global --force
-```
-
-This updates both server and TUI plugin entries when the OpenCode CLI supports the plugin installer. If your OpenCode build does not support `opencode plugin`, add the built package or tarball path manually to your OpenCode config instead.
+The build emits the server definition and TUI bundle into `dist/`; the package
+verifier writes the release candidate to `.artifacts/package.tgz`. Repository
+root shims are intentionally absent.
 
 ## Compatibility
 
 | Component | Supported version | Source |
 |---|---|---|
-| Host app | OpenCode `>= v1.14.49` | README compatibility note |
-| Plugin API | `@opencode-ai/plugin >=1.15.0` | `package.json` peer dependency |
-| TUI runtime | `@opentui/keymap >=0.2.10`, `@opentui/solid >=0.2.10`, `solid-js >=1.9.12` | `package.json` peer dependencies |
-| Local runtime | Bun `>=1.1.0` | README requirements; Bun-based scripts in `package.json` |
+| Host app | OpenCode v2 (`2.0.32` release baseline) | Release smoke contract |
+| Plugin API | `@opencode/plugin 2.0.32` | `package.json` dependency |
+| Theme API | `@opencode/theme 2.0.32` | `package.json` peer dependency |
+| TUI runtime | `@opentui/core >=0.5.17`, `@opentui/solid >=0.5.17`, `solid-js 1.9.12` | `package.json` peer dependencies |
+| Local runtime | Bun `>=1.3.0` | `package.json` engine |
 | TypeScript | `^5.5.0` | `package.json` dev dependency |
+
 
 ## Configuration
 
@@ -191,16 +182,15 @@ Alternatively, add a `usage_monitor` section to `oh-my-openagent.json`. Dedicate
 
 ### OpenAI
 
-OpenAI displays ChatGPT/Codex subscription quota windows from the OpenCode OAuth session, not from OpenAI Platform API keys. The plugin reads OpenCode auth storage and uses:
+OpenAI displays ChatGPT/Codex subscription quota windows from the active
+OpenCode OAuth credential, not from OpenAI Platform API keys. The plugin calls
+the v2 credential client and retains only the normalized access token, expiry,
+and `metadata.accountID`/`metadata.accountId` projection needed by the provider.
 
-```text
-$.openai.access
-$.openai.accountId
-$.openai.expires
-$.openai.type == "oauth"
-```
-
-The auth file is discovered using OS-neutral OpenCode data paths, starting with `${XDG_DATA_HOME}/opencode/auth.json` and falling back to `~/.local/share/opencode/auth.json`, legacy config locations, and Windows local/roaming app data paths. `OPENAI_API_KEY` and `OPENAI_ADMIN_KEY` are not used for subscription quota.
+The plugin never reads `auth.json`, never falls back to inactive credentials,
+and never retains refresh tokens, labels, arbitrary metadata, or raw host
+credential records. `OPENAI_API_KEY` and `OPENAI_ADMIN_KEY` are not used for
+subscription quota.
 
 ### Z.AI and GLM
 
@@ -287,7 +277,7 @@ The balance row shows the total CNY amount; expanding the provider reveals the g
 - If OpenAI shows `auth missing`, `oauth missing`, `oauth expired`, or `account id missing`, run `opencode providers login` for OpenAI and verify the OpenCode auth entry contains non-expired OAuth `openai.access`, `openai.accountId`, `openai.expires`, and `openai.type: "oauth"`.
 - If Z.AI shows `auth missing`, configure a supported Z.AI or Zhipu environment variable or OpenCode auth entry.
 - If Z.AI shows `partial` on an enterprise/org account, set `providers.zai.options.organization_id` and `providers.zai.options.project_id` (or `ZHIPU_ORGANIZATION_ID` / `ZHIPU_PROJECT_ID`) so the `?type=2` endpoint is used.
-- If DeepSeek shows `auth missing`, set `DEEPSEEK_API_KEY` or add an OpenCode `auth.json` deepseek entry.
+- If DeepSeek shows `auth missing`, set `DEEPSEEK_API_KEY` or activate a DeepSeek credential in OpenCode.
 - If the panel shows a `config` error, migrate `usage-monitor.json` to the `version: 2` shape and define at least one provider under `providers`.
 - If the panel is too wide or narrow, adjust `ui.width` in `usage-monitor.json`.
 - If refreshes appear stale, lower `refresh.interval_ms` or check provider API connectivity.
