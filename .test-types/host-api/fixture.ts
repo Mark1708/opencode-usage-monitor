@@ -1,38 +1,55 @@
-import type {
-  TuiDialogSelectOption,
-  TuiPluginApi,
-} from "@opencode-ai/plugin/tui";
+import { Plugin as ServerPlugin } from "@opencode/plugin";
+import { Plugin as TuiPlugin } from "@opencode/plugin/tui";
+import { createElement, insert, setProp, type JSX } from "@opentui/solid";
 
-export function verifyHostApi(api: TuiPluginApi): void {
-  const slotId: string = api.slots.register({
-    slots: {
-      sidebar_content: () => api.ui.DialogSelect({
-        title: "Host API fixture",
-        options: [],
-      }),
-    },
-  });
+export const server = ServerPlugin.define({
+  id: "fixture.server",
+  setup() {},
+});
 
-  const unregisterLayer = api.keymap.registerLayer({
-    commands: [{
-      name: "usage-monitor.fixture",
-      run: () => undefined,
-    }],
-    bindings: [{
-      key: "<leader>q",
-      cmd: "usage-monitor.fixture",
-    }],
-  });
+export const tui = TuiPlugin.define({
+  id: "fixture.tui",
+  setup(context) {
+    const removeUpdated = context.data.on("credential.updated", () => undefined);
+    const removeSwitched = context.data.on("credential.switched", (event) => {
+      void event.data.integrationID;
+    });
+    const removeSlot = context.ui.slot({
+      append: "sidebar.content",
+      render: () => {
+        const container = createElement("box");
+        setProp(container, "width", "100%");
+        insert(container, () => {
+          const label = createElement("text");
+          setProp(label, "fg", context.theme.text.base);
+          insert(label, context.theme.text.muted ? "fixture" : "fixture");
+          return label;
+        });
+        return container as unknown as JSX.Element;
+      },
+    });
 
-  const options: TuiDialogSelectOption<string>[] = [
-    { title: "Open", value: "open" },
-  ];
-  api.ui.dialog.replace(() => api.ui.DialogSelect({
-    title: "Select provider",
-    options,
-    onSelect: () => api.ui.dialog.clear(),
-  }));
-  api.renderer.requestRender();
-  api.lifecycle.onDispose(() => unregisterLayer());
-  void slotId;
-}
+    context.keymap.layer(() => ({
+      mode: "global",
+      commands: [{
+        id: "fixture.refresh",
+        title: "Refresh fixture",
+        slash: { name: "fixture-refresh" },
+        run: async () => {
+          const credentials = await context.client.credential.list();
+          context.ui.toast.show({
+            title: "Fixture",
+            message: `${credentials.length} credentials`,
+            variant: "info",
+          });
+        },
+      }],
+    }));
+
+    return () => {
+      removeSlot();
+      removeUpdated();
+      removeSwitched();
+    };
+  },
+});

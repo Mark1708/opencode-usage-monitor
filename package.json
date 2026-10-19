@@ -27,6 +27,7 @@
     "build:all": "bun run clean && bun run build:types && bun run build:index && bun run build:tui",
     "test": "bun test",
     "typecheck": "bun x tsc --noEmit",
+    "typecheck:host": "bun --cwd .test-types/host-api run typecheck",
     "verify:package": "node scripts/verify-package.mjs",
     "prepublishOnly": "echo 'Skipping build -- CI already built dist/'"
   },
