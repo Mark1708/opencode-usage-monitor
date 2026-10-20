@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Uses stable tracked Solid render roots so provider, collapse, configuration, and live theme changes update without snapshot re-registration.
 - Makes configuration reload and teardown generation-safe.
 - Builds and publishes only `dist/index.js`, `dist/tui.js`, and their reachable declarations.
+- Moved required checks and exact-artifact npm releases from GitLab CI to GitHub Actions with Trusted Publishing/OIDC.
 
 ### Fixed
 

@@ -20,6 +20,9 @@ src/
 ├── providers/             # Provider adapters
 └── views/                 # Provider-specific render models
 scripts/verify-package.mjs # Packed-artifact and clean-consumer gate
+.github/workflows/
+├── ci.yml                  # Required PR/push checks and package artifact
+└── release.yml             # Tag validation, npm OIDC publish, GitHub Release
 ```
 
 ## CONTRACTS
@@ -43,6 +46,13 @@ bun test
 bun run build:all
 bun run verify:package
 ```
+
+## AUTOMATION
+
+- GitHub is the source of truth. `CI / Typecheck`, `CI / Tests`, and `CI / Package` are required before merge.
+- CI uploads the exact `.artifacts/package.tgz` produced by `verify:package`.
+- A `vX.Y.Z` tag must equal `package.json.version`; the release workflow rebuilds all gates, publishes the verified tarball through npm Trusted Publishing/OIDC, and attaches it with its SHA-256 digest to the GitHub Release.
+- GitLab is a read-only mirror and has no release pipeline.
 
 ## ANTI-PATTERNS
 

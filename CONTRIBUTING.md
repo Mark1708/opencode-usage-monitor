@@ -137,28 +137,34 @@ Review for:
 - Updated tests and documentation.
 - No significant performance regression.
 
-## Local testing in OpenCode
+## Local package verification
 
-Build after each source change:
+Build and verify the same package artifact used by CI:
 
 ```bash
+bun install --frozen-lockfile
+bun run typecheck
+bun run typecheck:host
+bun test
 bun run build:all
+bun run verify:package
 ```
 
-Then test the built plugin with your local OpenCode setup. Keep local configuration and credentials out of commits.
-
-For local OpenCode testing without publishing to npm, pack the current checkout and install the tarball:
-
-```bash
-npm pack
-opencode plugin "$(pwd)/opencode-usage-monitor-2.0.1.tgz" --global --force
-```
-
-If your OpenCode build does not include the plugin installer command, configure the built local package path manually in your OpenCode config.
+The verifier writes `.artifacts/package.tgz` and exercises its public exports
+from a clean consumer. Runtime testing must install that tarball into a
+disposable OpenCode v2 wrapper; keep local configuration and credentials out of
+commits.
 
 ## Release process
 
-Maintainers handle releases. Build and validate locally before publishing; CI is expected to provide the final `dist/` artifacts, and `prepublishOnly` intentionally does not rebuild them.
+GitHub is the source of truth. Pull requests require the `Typecheck`, `Tests`,
+and `Package` GitHub Actions jobs. Maintainers release by pushing a `vX.Y.Z`
+tag that matches `package.json.version`. The release workflow reruns every
+gate, publishes the exact verified `.artifacts/package.tgz` through npm Trusted
+Publishing/OIDC, and attaches the tarball plus its SHA-256 digest to the GitHub
+Release. `prepublishOnly` intentionally does not rebuild.
+
+GitLab is maintained only as a read-only mirror.
 
 ## Language
 
