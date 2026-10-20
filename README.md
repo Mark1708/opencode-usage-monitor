@@ -13,7 +13,7 @@
 |---|---|
 | Status | Actively maintained personal OpenCode tool/plugin |
 | Type | OpenCode TUI plugin / host extension |
-| Host app | OpenCode v2; `2.0.32` is the release baseline |
+| Host app | OpenCode `1.19.3` with the v2 plugin API |
 | Package | `opencode-usage-monitor` `3.0.0` |
 | Runtime | Bun `>= 1.3.0` for local development |
 | Maintainer checks | `bun install --frozen-lockfile && bun run typecheck && bun run typecheck:host && bun test && bun run build:all && bun run verify:package` |
@@ -60,7 +60,7 @@ bun run build:all
 Install the release with the v2 plugin manager:
 
 ```sh
-opencode plugin add opencode-usage-monitor@3.0.0
+opencode plugin opencode-usage-monitor@3.0.0 --global --force
 ```
 
 The equivalent explicit configuration is:
@@ -103,7 +103,7 @@ root shims are intentionally absent.
 
 | Component | Supported version | Source |
 |---|---|---|
-| Host app | OpenCode v2 (`2.0.32` release baseline) | Release smoke contract |
+| Host app | OpenCode `1.19.3` (v2 plugin API release baseline) | Release smoke contract |
 | Plugin API | `@opencode/plugin 2.0.32` | `package.json` dependency |
 | Theme API | `@opencode/theme 2.0.32` | `package.json` peer dependency |
 | TUI runtime | `@opentui/core >=0.5.17`, `@opentui/solid >=0.5.17`, `solid-js 1.9.12` | `package.json` peer dependencies |
