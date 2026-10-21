@@ -14,7 +14,7 @@
 | Status | Actively maintained personal OpenCode tool/plugin |
 | Type | OpenCode TUI plugin / host extension |
 | Host app | OpenCode `>=2.0.32`; release smoke also covers current `2.1.2` |
-| Package | `opencode-usage-monitor` `3.0.0` |
+| Package | `opencode-usage-monitor` `3.1.0` |
 | Runtime | Bun `>= 1.3.0` for local development |
 | Maintainer checks | `bun install --frozen-lockfile && bun run typecheck && bun run typecheck:host && bun test && bun run build:all && bun run verify:package` |
 
@@ -61,7 +61,7 @@ bun run build:all
 Install the release with the v2 plugin manager:
 
 ```sh
-opencode plugin add opencode-usage-monitor@3.0.0
+opencode plugin add opencode-usage-monitor@3.1.0
 ```
 
 The equivalent explicit configuration is:
@@ -69,7 +69,7 @@ The equivalent explicit configuration is:
 ```jsonc
 {
   "$schema": "https://opencode.ai/v2/cli.json",
-  "plugins": ["opencode-usage-monitor@3.0.0"]
+  "plugins": ["opencode-usage-monitor@3.1.0"]
 }
 ```
 
@@ -83,7 +83,7 @@ This major does not support OpenCode v1. V1 users must pin
 ### Package install for local development
 
 ```sh
-bun add opencode-usage-monitor@3.0.0
+bun add opencode-usage-monitor@3.1.0
 ```
 
 ### Local checkout

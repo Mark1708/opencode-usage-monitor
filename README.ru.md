@@ -14,7 +14,7 @@
 | Статус | Активно поддерживаемый персональный OpenCode tool/plugin |
 | Тип | OpenCode TUI plugin / host extension |
 | Host app | OpenCode `>=2.0.32`; release smoke также проверен на текущей `2.1.2` |
-| Package | `opencode-usage-monitor` `3.0.0` |
+| Package | `opencode-usage-monitor` `3.1.0` |
 | Runtime | Bun `>= 1.3.0` для локальной разработки |
 | Проверки maintainer | `bun install --frozen-lockfile && bun run typecheck && bun run typecheck:host && bun test && bun run build:all && bun run verify:package` |
 
@@ -44,7 +44,7 @@ Plugin отображается внутри sidebar терминального 
 ## Быстрый старт
 
 ```sh
-opencode plugin add opencode-usage-monitor@3.0.0
+opencode plugin add opencode-usage-monitor@3.1.0
 ```
 
 ## Установка
@@ -54,7 +54,7 @@ opencode plugin add opencode-usage-monitor@3.0.0
 Установите release через v2 plugin manager:
 
 ```sh
-opencode plugin add opencode-usage-monitor@3.0.0
+opencode plugin add opencode-usage-monitor@3.1.0
 ```
 
 Эквивалентная явная конфигурация:
@@ -62,7 +62,7 @@ opencode plugin add opencode-usage-monitor@3.0.0
 ```jsonc
 {
   "$schema": "https://opencode.ai/v2/cli.json",
-  "plugins": ["opencode-usage-monitor@3.0.0"]
+  "plugins": ["opencode-usage-monitor@3.1.0"]
 }
 ```
 
@@ -76,7 +76,7 @@ TUI definitions.
 ### Package для локальной разработки
 
 ```sh
-bun add opencode-usage-monitor@3.0.0
+bun add opencode-usage-monitor@3.1.0
 ```
 
 ### Локальный checkout

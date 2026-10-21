@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-21
+
 ### Added
 
 - Added OpenCode Go rolling 5h, weekly, and monthly usage through the read-only Go usage endpoint.

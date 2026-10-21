@@ -1,6 +1,6 @@
 # USAGE MONITOR PLUGIN
 
-**Version:** 3.0.0 | **npm:** `opencode-usage-monitor` | **Plugin IDs:** `usage-monitor`, `usage-monitor.tui`
+**Version:** 3.1.0 | **npm:** `opencode-usage-monitor` | **Plugin IDs:** `usage-monitor`, `usage-monitor.tui`
 
 ## OVERVIEW
 
