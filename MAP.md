@@ -36,6 +36,7 @@ Provider-specific code lives under `src/providers/`:
 - `openai.ts`: ChatGPT WHAM subscription quota provider.
 - `zai.ts`: Z.AI / Zhipu quota provider.
 - `deepseek.ts`: DeepSeek balance provider.
+- `opencode-go.ts`: OpenCode Go rolling, weekly, and monthly usage provider.
 - `registry.ts`: adapter resolution for legacy consumers.
 - `types.ts`: shared normalized provider and runtime-facing types.
 
@@ -58,7 +59,7 @@ Snapshot validation rejects unsafe or non-canonical data before publication or c
 
 `credentials.ts` resolves credentials through provider-specific allowlists. Credential leases carry an epoch and safe account metadata so refresh work can reject stale completions after credential changes.
 
-OpenAI requires top-level OpenCode OAuth metadata: `type: "oauth"`, `access`, `accountId`, and `expires`. Z.AI / Zhipu and DeepSeek can use OpenCode auth entries or supported environment variables. Refresh-only OpenCode entries are treated as missing secrets.
+OpenAI requires top-level OpenCode OAuth metadata: `type: "oauth"`, `access`, `accountId`, and `expires`. Z.AI / Zhipu, DeepSeek, and OpenCode Go can use OpenCode auth entries or supported environment variables. Refresh-only OpenCode entries are treated as missing secrets.
 
 `provider-cache.ts` separates persistent cache identity by provider, account-safe scope, credential variant, and options. Entries without a validated account scope stay memory-only. Cache files are written through private directories, schema validation, digest checks, and atomic temp-file replacement.
 
@@ -95,6 +96,16 @@ DeepSeek uses `GET https://api.deepseek.com/user/balance` with `Authorization: B
 - `is_available=false` remains visible without inventing reset semantics.
 - DeepSeek does not emit fake windows because the API exposes balance, not quota reset periods.
 
+### OpenCode Go
+
+OpenCode Go uses `GET https://opencode.ai/zen/go/v1/usage` with `Authorization: Bearer <token>`.
+
+- `usage.rolling`, `usage.weekly`, and `usage.monthly` map to canonical 5h, week, and billing-month windows.
+- `percent` maps to percent usage and `resetsAt` maps to the window reset timestamp.
+- `status="rate-limited"` or a percentage of at least 100 maps to a reached limit.
+- Missing windows map to `partial`.
+
+
 ## 7. Rendering rules
 
 Window ordering is deterministic:
@@ -118,5 +129,6 @@ Rendered values are single-line and width-truncated. Debug details are hidden un
 
 - OpenAI WHAM response fields are private/undocumented and may change.
 - Z.AI quota response field names are normalized defensively; unknown future fields may be hidden or rendered only as generic safe metadata.
+- The OpenCode Go usage endpoint is read-only but is not documented as a stable public API; response changes may require a provider update.
 - Only the dedicated config file is watched directly; restart OpenCode after changing the secondary `oh-my-openagent.json` source.
 - Partial provider data can render without all expected quota windows.

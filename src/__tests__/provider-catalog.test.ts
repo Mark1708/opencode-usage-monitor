@@ -52,6 +52,9 @@ describe("v2 built-in provider catalog", () => {
 		const deepseek = BUILTIN_PROVIDER_CATALOG.find(
 			(entry) => entry.metadata.id === "deepseek",
 		);
+		const opencodeGo = BUILTIN_PROVIDER_CATALOG.find(
+			(entry) => entry.metadata.id === "opencode-go",
+		);
 
 		expect(zai?.metadata.officialApi.baseUrls).toEqual([
 			"https://api.z.ai",
@@ -66,13 +69,20 @@ describe("v2 built-in provider catalog", () => {
 		expect(deepseek?.metadata.officialApi.baseUrls).toEqual([
 			"https://api.deepseek.com",
 		]);
+		expect(opencodeGo?.metadata.officialApi.baseUrls).toEqual([
+			"https://opencode.ai",
+		]);
+		expect(opencodeGo?.metadata.officialApi.endpoints).toEqual([
+			{ method: "GET", path: "/zen/go/v1/usage" },
+		]);
 	});
 
-	test("includes OpenAI subscription quota provider before Z.AI and DeepSeek", () => {
+	test("orders OpenAI, Z.AI, DeepSeek, and OpenCode Go providers", () => {
 		expect(BUILTIN_PROVIDER_CATALOG.map((entry) => entry.metadata.id)).toEqual([
 			"openai",
 			"zai",
 			"deepseek",
+			"opencode-go",
 		]);
 	});
 
@@ -82,6 +92,9 @@ describe("v2 built-in provider catalog", () => {
 		)?.parseOptions({});
 		const deepseek = BUILTIN_PROVIDER_CATALOG.find(
 			(entry) => entry.metadata.id === "deepseek",
+		)?.parseOptions({});
+		const opencodeGo = BUILTIN_PROVIDER_CATALOG.find(
+			(entry) => entry.metadata.id === "opencode-go",
 		)?.parseOptions({});
 
 		expect(zai?.ok && zai.value.present(readyProvider("zai", "z.ai")).id).toBe(
@@ -96,9 +109,15 @@ describe("v2 built-in provider catalog", () => {
 		expect(
 			deepseek?.ok && deepseek.value.present(readyProvider("deepseek")).id,
 		).toBe("deepseek");
+		expect(
+			opencodeGo?.ok &&
+				opencodeGo.value.present(
+					readyProvider("opencode-go", "OpenCode Go"),
+				).id,
+		).toBe("opencode-go");
 	});
 
-	test("lists every supported OpenAI, Z.AI and DeepSeek credential alias in discovery order", () => {
+	test("lists every supported provider credential alias in discovery order", () => {
 		const openai = BUILTIN_PROVIDER_CATALOG.find(
 			(entry) => entry.metadata.id === "openai",
 		);
@@ -107,6 +126,9 @@ describe("v2 built-in provider catalog", () => {
 		);
 		const deepseek = BUILTIN_PROVIDER_CATALOG.find(
 			(entry) => entry.metadata.id === "deepseek",
+		);
+		const opencodeGo = BUILTIN_PROVIDER_CATALOG.find(
+			(entry) => entry.metadata.id === "opencode-go",
 		);
 
 		expect(openai?.credentialPolicy.defaultCandidates).toEqual([
@@ -126,6 +148,10 @@ describe("v2 built-in provider catalog", () => {
 		expect(deepseek?.credentialPolicy.defaultCandidates).toEqual([
 			{ source: "opencode", variant: "deepseek", name: "deepseek" },
 			{ source: "env", variant: "deepseek", name: "DEEPSEEK_API_KEY" },
+		]);
+		expect(opencodeGo?.credentialPolicy.defaultCandidates).toEqual([
+			{ source: "opencode", variant: "opencode-go", name: "opencode-go" },
+			{ source: "env", variant: "opencode-go", name: "OPENCODE_GO_API_KEY" },
 		]);
 	});
 

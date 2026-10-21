@@ -2,7 +2,7 @@
 
 [English version](README.md)
 
-> OpenCode TUI sidebar plugin, который показывает квоты и баланс OpenAI, Z.AI / GLM и DeepSeek без раскрытия provider credentials в UI.
+> OpenCode TUI sidebar plugin, который показывает квоты и баланс OpenAI, Z.AI / GLM, DeepSeek и OpenCode Go без раскрытия provider credentials в UI.
 
 [![Package](https://img.shields.io/badge/npm-opencode--usage--monitor-111827?style=for-the-badge&labelColor=111827&color=5b5ef4)](https://www.npmjs.com/package/opencode-usage-monitor)
 ![Runtime](https://img.shields.io/badge/runtime-Bun-111827?style=for-the-badge&logo=bun&logoColor=5b5ef4)
@@ -33,6 +33,7 @@ Plugin отображается внутри sidebar терминального 
 - Показывает usage windows OpenAI ChatGPT, например 5h/week, со временем reset и опциональными деталями plan или credits.
 - Показывает quota windows Z.AI и GLM 5h/week/month со временем reset и опциональными деталями plan. Поддерживает enterprise/org coding plans через organization и project scoping.
 - Показывает баланс аккаунта DeepSeek в CNY с опциональной детализацией granted/topped-up.
+- Показывает usage windows OpenCode Go 5h/week/month со временем reset.
 - Стандартизирует provider output как explicit usage windows плюс typed provider-owned details; баланс DeepSeek отображается как balance detail, а не как fake reset window.
 - Находит credentials в OpenCode auth storage и поддерживаемых environment variables.
 - Редактирует secrets из error messages перед выводом в TUI.
@@ -122,7 +123,8 @@ Plugin сначала читает отдельный config-файл:
   "providers": {
     "openai": {},
     "zai": {},
-    "deepseek": {}
+    "deepseek": {},
+    "opencode-go": {}
   }
 }
 ```
@@ -162,6 +164,9 @@ Plugin сначала читает отдельный config-файл:
     },
     "deepseek": {
       "credential": { "source": "opencode", "entry": "deepseek" }
+    },
+    "opencode-go": {
+      "credential": { "source": "opencode", "entry": "opencode-go" }
     }
   }
 }
@@ -234,6 +239,17 @@ export DEEPSEEK_API_KEY="your-deepseek-key"
 
 Balance row показывает общий CNY amount; раскрытие provider показывает granted (promotional) и topped-up (paid) breakdown.
 
+### OpenCode Go
+
+OpenCode Go показывает rolling 5h, weekly и monthly usage через `GET https://opencode.ai/zen/go/v1/usage`. Сначала используется сохранённый OpenCode credential `opencode-go`. Для явного environment fallback задайте:
+
+```sh
+export OPENCODE_GO_API_KEY="your-opencode-go-key"
+```
+
+Endpoint read-only и используется клиентами OpenCode Go, но пока не документирован как стабильный public API. Изменение response contract может потребовать обновления plugin.
+
+
 ## Использование
 
 - Нажмите на основной usage header, чтобы свернуть или раскрыть весь panel.
@@ -258,7 +274,7 @@ Balance row показывает общий CNY amount; раскрытие provi
 │   ├── sanitize.ts            # Helpers для secret redaction
 │   ├── snapshot-validation.ts # Snapshot validation before publication/cache
 │   ├── tui.ts                 # TUI plugin module
-│   ├── providers/             # OpenAI, Z.AI / GLM и DeepSeek provider clients
+│   ├── providers/             # OpenAI, Z.AI / GLM, DeepSeek и OpenCode Go clients
 │   └── views/                 # Helpers для TUI view rendering
 ├── package.json               # Package metadata, scripts, peer dependencies
 ├── tsconfig.json              # Strict TypeScript config
@@ -271,6 +287,7 @@ Balance row показывает общий CNY amount; раскрытие provi
 - Если Z.AI показывает `auth missing`, настройте поддерживаемую Z.AI или Zhipu environment variable либо OpenCode auth entry.
 - Если Z.AI показывает `partial` на enterprise/org account, задайте `providers.zai.options.organization_id` и `providers.zai.options.project_id` или `ZHIPU_ORGANIZATION_ID` / `ZHIPU_PROJECT_ID`, чтобы использовался endpoint `?type=2`.
 - Если DeepSeek показывает `auth missing`, задайте `DEEPSEEK_API_KEY` или активируйте DeepSeek credential в OpenCode.
+- Если OpenCode Go показывает `auth missing`, выполните `/connect`, выберите OpenCode Go и введите его API key либо задайте `OPENCODE_GO_API_KEY`.
 - Если panel показывает `config` error, мигрируйте `usage-monitor.json` на `version: 2` shape и задайте хотя бы один provider в `providers`.
 - Если panel слишком широкий или узкий, измените `ui.width` в `usage-monitor.json`.
 - Если refresh выглядит устаревшим, уменьшите `refresh.interval_ms` или проверьте provider API connectivity.
@@ -281,7 +298,7 @@ Balance row показывает общий CNY amount; раскрытие provi
 
 - Plugin читает локальные OpenCode auth metadata и поддерживаемые environment variables, но примеры в README используют только placeholders.
 - Secrets редактируются из rendered error messages до попадания в TUI.
-- Provider data зависит от доступности внешних API OpenAI, Z.AI, Zhipu и DeepSeek, а также от credential permissions.
+- Provider data зависит от доступности внешних API OpenAI, Z.AI, Zhipu, DeepSeek и OpenCode Go, а также от credential permissions.
 - Package является host extension; runtime-поведение зависит от совместимых OpenCode и OpenTUI APIs.
 
 ## Статус
