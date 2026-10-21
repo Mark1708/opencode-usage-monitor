@@ -30,7 +30,7 @@ Plugin отображается внутри sidebar терминального 
 
 ## Сводка
 
-- Показывает usage windows OpenAI ChatGPT, например 5h/week, со временем reset и опциональными деталями plan или credits.
+- Показывает usage windows OpenAI ChatGPT, число доступных Codex reset credits и опционально ближайший срок их истечения.
 - Показывает quota windows Z.AI и GLM 5h/week/month со временем reset и опциональными деталями plan. Поддерживает enterprise/org coding plans через organization и project scoping.
 - Показывает баланс аккаунта DeepSeek в CNY с опциональной детализацией granted/topped-up.
 - Показывает usage windows OpenCode Go 5h/week/month со временем reset.
@@ -156,7 +156,11 @@ Plugin сначала читает отдельный config-файл:
   },
   "providers": {
     "openai": {
-      "credential": { "source": "opencode", "entry": "openai" }
+      "credential": { "source": "opencode", "entry": "openai" },
+      "options": {
+        "show_resets": true,
+        "show_reset_expiry": false
+      }
     },
     "zai": {
       "credential": { "source": "opencode", "entry": "zai-coding-plan" },
@@ -189,6 +193,14 @@ Plugin никогда не читает `auth.json`, не использует i
 сохраняет refresh tokens, labels, произвольные metadata или raw host credential
 records. `OPENAI_API_KEY` и `OPENAI_ADMIN_KEY` не используются для subscription
 quota.
+
+Число доступных Codex reset credits по умолчанию берётся из основного usage
+response. Чтобы скрыть его, задайте `show_resets: false` в
+`providers.openai.options`. Опция `show_reset_expiry: true` включает условный
+дополнительный request и показывает ближайший срок истечения доступного credit.
+Этот request выполняется только когда resets отображаются и доступен хотя бы
+один credit; при его ошибке usage windows и число resets остаются видимыми без
+expiry.
 
 ### Z.AI и GLM
 

@@ -30,7 +30,7 @@ The plugin renders inside the OpenCode terminal UI sidebar.
 
 ## Summary
 
-- Displays OpenAI ChatGPT usage windows such as 5h/week with reset timing and optional plan or credits details.
+- Displays OpenAI ChatGPT usage windows, available Codex reset credits, and optional nearest reset-credit expiry.
 - Displays Z.AI and GLM 5h/week/month quota windows with reset timing and optional plan details. Supports enterprise/org coding plans via organization and project scoping.
 - Displays DeepSeek account balance (CNY) with an optional granted/topped-up breakdown.
 - Displays OpenCode Go 5h/week/month usage windows with reset timing.
@@ -163,7 +163,11 @@ Full documented shape:
   },
   "providers": {
     "openai": {
-      "credential": { "source": "opencode", "entry": "openai" }
+      "credential": { "source": "opencode", "entry": "openai" },
+      "options": {
+        "show_resets": true,
+        "show_reset_expiry": false
+      }
     },
     "zai": {
       "credential": { "source": "opencode", "entry": "zai-coding-plan" },
@@ -196,6 +200,13 @@ The plugin never reads `auth.json`, never falls back to inactive credentials,
 and never retains refresh tokens, labels, arbitrary metadata, or raw host
 credential records. `OPENAI_API_KEY` and `OPENAI_ADMIN_KEY` are not used for
 subscription quota.
+
+Available Codex reset credits are shown by default from the primary usage
+response. Set `providers.openai.options.show_resets` to `false` to hide them.
+Set `show_reset_expiry` to `true` to make a conditional supplemental request
+and show the nearest available credit expiry. The supplemental request runs
+only when resets are visible and at least one credit is available; a failure
+omits the expiry without hiding the usage windows or reset count.
 
 ### Z.AI and GLM
 
