@@ -115,7 +115,7 @@ describe("provider normalization", () => {
 				epoch: 1,
 				metadata: { accountId: "account-123", type: "oauth", expires: String(Date.now() + 60_000) },
 			},
-			options: {},
+			options: { show_resets: true, show_reset_expiry: false },
 			signal: new AbortController().signal,
 			timeoutMs: CONFIG_DEFAULTS.request_timeout_ms,
 		});

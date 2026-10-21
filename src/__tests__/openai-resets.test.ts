@@ -89,7 +89,7 @@ describe("OpenAI Codex reset credits", () => {
 
 	test("keeps the count when the supplemental endpoint is unavailable", async () => {
 		let calls = 0;
-		globalThis.fetch = (() => {
+		globalThis.fetch = ((_input: RequestInfo | URL) => {
 			calls += 1;
 			return Promise.resolve(
 				calls === 1 ? Response.json(RESET_USAGE) : Response.json({}, { status: 503 }),
