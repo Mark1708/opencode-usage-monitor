@@ -2,7 +2,7 @@
 
 [Русская версия](./README.ru.md)
 
-> OpenCode TUI sidebar plugin that shows OpenAI, Z.AI / GLM, and DeepSeek quota/balance usage without exposing provider credentials in the UI.
+> OpenCode TUI sidebar plugin that shows OpenAI, Z.AI / GLM, DeepSeek, and OpenCode Go quota/balance usage without exposing provider credentials in the UI.
 
 [![Package](https://img.shields.io/badge/npm-opencode--usage--monitor-111827?style=for-the-badge&labelColor=111827&color=5b5ef4)](https://www.npmjs.com/package/opencode-usage-monitor)
 ![Runtime](https://img.shields.io/badge/runtime-Bun-111827?style=for-the-badge&logo=bun&logoColor=5b5ef4)
@@ -33,6 +33,7 @@ The plugin renders inside the OpenCode terminal UI sidebar.
 - Displays OpenAI ChatGPT usage windows such as 5h/week with reset timing and optional plan or credits details.
 - Displays Z.AI and GLM 5h/week/month quota windows with reset timing and optional plan details. Supports enterprise/org coding plans via organization and project scoping.
 - Displays DeepSeek account balance (CNY) with an optional granted/topped-up breakdown.
+- Displays OpenCode Go 5h/week/month usage windows with reset timing.
 - Standardizes provider output as explicit usage windows plus typed provider-owned details; DeepSeek balance is displayed as a balance detail rather than a reset window.
 - Discovers credentials from OpenCode auth storage and supported environment variables.
 - Redacts secrets from error messages before rendering them in the TUI.
@@ -129,7 +130,8 @@ Smallest useful configuration:
   "providers": {
     "openai": {},
     "zai": {},
-    "deepseek": {}
+    "deepseek": {},
+    "opencode-go": {}
   }
 }
 ```
@@ -169,6 +171,9 @@ Full documented shape:
     },
     "deepseek": {
       "credential": { "source": "opencode", "entry": "deepseek" }
+    },
+    "opencode-go": {
+      "credential": { "source": "opencode", "entry": "opencode-go" }
     }
   }
 }
@@ -241,6 +246,17 @@ export DEEPSEEK_API_KEY="your-deepseek-key"
 
 The balance row shows the total CNY amount; expanding the provider reveals the granted (promotional) and topped-up (paid) breakdown.
 
+### OpenCode Go
+
+OpenCode Go displays rolling 5h, weekly, and monthly usage from `GET https://opencode.ai/zen/go/v1/usage`. The stored OpenCode credential named `opencode-go` is preferred. For an explicit environment fallback, set:
+
+```sh
+export OPENCODE_GO_API_KEY="your-opencode-go-key"
+```
+
+The endpoint is read-only and currently used by OpenCode Go clients, but it is not documented as a stable public API. Future response changes may require a plugin update.
+
+
 ## Usage
 
 - Click the main usage header to collapse or expand the full panel.
@@ -265,7 +281,7 @@ The balance row shows the total CNY amount; expanding the provider reveals the g
 │   ├── sanitize.ts            # Secret redaction helpers
 │   ├── snapshot-validation.ts # Snapshot validation before publication/cache
 │   ├── tui.ts                 # TUI plugin module
-│   ├── providers/             # OpenAI, Z.AI / GLM, and DeepSeek provider clients
+│   ├── providers/             # OpenAI, Z.AI / GLM, DeepSeek, and OpenCode Go clients
 │   └── views/                 # TUI view rendering helpers
 ├── package.json               # Package metadata, scripts, peer dependencies
 ├── tsconfig.json              # Strict TypeScript config
@@ -278,6 +294,7 @@ The balance row shows the total CNY amount; expanding the provider reveals the g
 - If Z.AI shows `auth missing`, configure a supported Z.AI or Zhipu environment variable or OpenCode auth entry.
 - If Z.AI shows `partial` on an enterprise/org account, set `providers.zai.options.organization_id` and `providers.zai.options.project_id` (or `ZHIPU_ORGANIZATION_ID` / `ZHIPU_PROJECT_ID`) so the `?type=2` endpoint is used.
 - If DeepSeek shows `auth missing`, set `DEEPSEEK_API_KEY` or activate a DeepSeek credential in OpenCode.
+- If OpenCode Go shows `auth missing`, run `/connect`, select OpenCode Go, and enter its API key, or set `OPENCODE_GO_API_KEY`.
 - If the panel shows a `config` error, migrate `usage-monitor.json` to the `version: 2` shape and define at least one provider under `providers`.
 - If the panel is too wide or narrow, adjust `ui.width` in `usage-monitor.json`.
 - If refreshes appear stale, lower `refresh.interval_ms` or check provider API connectivity.
@@ -288,7 +305,7 @@ The balance row shows the total CNY amount; expanding the provider reveals the g
 
 - The plugin reads local OpenCode auth metadata and supported environment variables, but examples in this README use placeholders only.
 - Secrets are redacted from rendered error messages before they reach the TUI.
-- Provider data depends on external OpenAI, Z.AI, Zhipu, and DeepSeek API availability and credential permissions.
+- Provider data depends on external OpenAI, Z.AI, Zhipu, DeepSeek, and OpenCode Go API availability and credential permissions.
 - The package is a host extension; runtime behavior depends on compatible OpenCode and OpenTUI APIs.
 
 ## Status

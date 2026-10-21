@@ -4,7 +4,7 @@
 
 ## OVERVIEW
 
-OpenCode V2-only sidebar plugin for OpenAI, Z.AI/GLM, and DeepSeek quota visibility. Runtime credentials come from the active OpenCode credential record; raw credentials and provider payloads never enter render state or persistent cache.
+OpenCode V2-only sidebar plugin for OpenAI, Z.AI/GLM, DeepSeek, and OpenCode Go quota visibility. Runtime credentials come from the active OpenCode credential record; raw credentials and provider payloads never enter render state or persistent cache.
 
 ## STRUCTURE
 
