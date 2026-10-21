@@ -60,7 +60,7 @@ bun run build:all
 Install the release with the v2 plugin manager:
 
 ```sh
-opencode plugin add opencode-usage-monitor@3.0.0 --global --force
+opencode plugin add opencode-usage-monitor@3.0.0
 ```
 
 The equivalent explicit configuration is:
