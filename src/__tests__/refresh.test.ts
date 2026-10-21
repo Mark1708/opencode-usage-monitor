@@ -1100,4 +1100,104 @@ describe("deterministic provider refresh coordinator", () => {
 		expect(timers.count).toBe(scheduledAfterReconfigure);
 		expect(state(coordinator.getStates(), "timer").nextDueAt).toBe(5_900);
 	});
+
+	test("credential invalidation blocks an old fetch while a new credential list is pending", async () => {
+		const oldFetch = deferred<StandardUsageProvider>();
+		const newCredential = deferred<CredentialResolution>();
+		const newFetch = deferred<StandardUsageProvider>();
+		const cache = new TestCache();
+		let fetches = 0;
+		const resolver = credentials((_id, call) => {
+			if (call === 3) return newCredential.promise;
+			return {
+				ok: true,
+				accountScope: ACCOUNT_SCOPE,
+				lease: Object.freeze({ ...LEASE, epoch: call >= 3 ? 2 : 1 }),
+			};
+		});
+		const coordinator = createRefreshCoordinator({
+			providers: [
+				provider("rotating", () => {
+					fetches += 1;
+					return fetches === 1 ? oldFetch.promise : newFetch.promise;
+				}),
+			],
+			policy: POLICY_MANUAL,
+			credentialResolver: resolver,
+			cache,
+		});
+		await settle();
+
+		const staleRefresh = coordinator.refreshProvider("rotating");
+		await settle();
+		coordinator.invalidateCredentials();
+		const currentRefresh = coordinator.refreshProvider("rotating");
+		await settle();
+		oldFetch.resolve(snapshot("rotating", 1_000, "partial"));
+		await staleRefresh;
+
+		expect(state(coordinator.getStates(), "rotating")).toMatchObject({
+			generation: 2,
+			status: "refreshing",
+		});
+		expect(state(coordinator.getStates(), "rotating").snapshot).toBeUndefined();
+		expect(cache.writes).toHaveLength(0);
+
+		newCredential.resolve({
+			ok: true,
+			accountScope: ACCOUNT_SCOPE,
+			lease: Object.freeze({ ...LEASE, secret: "rotated-credential", epoch: 2 }),
+		});
+		await settle();
+		newFetch.resolve(snapshot("rotating", 2_000));
+		await currentRefresh;
+
+		expect(state(coordinator.getStates(), "rotating")).toMatchObject({
+			generation: 2,
+			credentialEpoch: 2,
+			status: "ready",
+		});
+		expect(cache.writes).toHaveLength(1);
+		expect(cache.writes[0]?.target.generation).toBe(2);
+	});
+
+	for (const terminal of ["missing-auth", "forbidden", "unsupported"] as const) {
+		test(`clears a successful snapshot and suppresses cache writes for ${terminal}`, async () => {
+			const clock = new FakeClock();
+			const cache = new TestCache();
+			let fetches = 0;
+			const coordinator = createRefreshCoordinator({
+				providers: [
+					provider("terminal", async () => {
+						fetches += 1;
+						return fetches === 1
+							? snapshot("terminal", clock.now())
+							: {
+									...snapshot("terminal", clock.now()),
+									status: terminal,
+									statusText: terminal,
+								};
+					}),
+				],
+				policy: POLICY_AUTO,
+				credentialResolver: credentials(),
+				cache,
+				clock,
+				timers: clock,
+			});
+			await settle();
+			expect(state(coordinator.getStates(), "terminal").status).toBe("ready");
+			expect(cache.writes).toHaveLength(1);
+
+			await coordinator.refreshProvider("terminal");
+
+			expect(state(coordinator.getStates(), "terminal")).toMatchObject({
+				status: terminal === "missing-auth" ? "needs_auth" : terminal,
+				nextDueAt: undefined,
+			});
+			expect(state(coordinator.getStates(), "terminal").snapshot).toBeUndefined();
+			expect(cache.writes).toHaveLength(1);
+			expect(clock.pendingCount).toBe(0);
+		});
+	}
 });

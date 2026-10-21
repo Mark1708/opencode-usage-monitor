@@ -13,10 +13,10 @@
 |---|---|
 | Статус | Активно поддерживаемый персональный OpenCode tool/plugin |
 | Тип | OpenCode TUI plugin / host extension |
-| Host app | Документирован OpenCode `>= v1.14.49`; peer dependency `@opencode-ai/plugin >=1.15.0` |
-| Package | `opencode-usage-monitor` `2.0.1` package metadata |
-| Runtime | Bun `>= 1.1.0` документирован для локальной разработки |
-| Проверки maintainer | `bun install && bun run build:all && bun test && bun run typecheck` |
+| Host app | OpenCode `>=2.0.32`; release smoke также проверен на текущей `2.1.2` |
+| Package | `opencode-usage-monitor` `3.0.0` |
+| Runtime | Bun `>= 1.3.0` для локальной разработки |
+| Проверки maintainer | `bun install --frozen-lockfile && bun run typecheck && bun run typecheck:host && bun test && bun run build:all && bun run verify:package` |
 
 ## Скриншоты
 
@@ -43,66 +43,66 @@ Plugin отображается внутри sidebar терминального 
 ## Быстрый старт
 
 ```sh
-# установить опубликованный OpenCode plugin глобально
-opencode plugin opencode-usage-monitor@latest --global --force
-
-# опционально: собрать из локального checkout для разработки
-git clone https://github.com/Mark1708/opencode-usage-monitor.git
-cd opencode-usage-monitor
-bun install
-bun run build:all
+opencode plugin add opencode-usage-monitor@3.0.0 --global --force
 ```
 
 ## Установка
 
-### Установка OpenCode plugin
+### OpenCode v2
+
+Установите release через v2 plugin manager:
 
 ```sh
-opencode plugin opencode-usage-monitor@latest --global --force
+opencode plugin add opencode-usage-monitor@3.0.0 --global --force
 ```
 
-Это рекомендуемый путь для пользователей: plugin опубликован в npm, и OpenCode может установить его напрямую.
+Эквивалентная явная конфигурация:
 
-### Установка package для локальной разработки
+```jsonc
+{
+  "$schema": "https://opencode.ai/v2/cli.json",
+  "plugins": ["opencode-usage-monitor@3.0.0"]
+}
+```
+
+Добавьте package один раз: в `~/.config/opencode/cli.json` либо в v2-поле
+`plugins` файла `opencode.json(c)`. Package экспортирует отдельные v2 server и
+TUI definitions.
+
+Этот major не поддерживает OpenCode v1. Пользователям v1 нужно закрепить
+`opencode-usage-monitor@2.0.1`; dual-runtime compatibility shim отсутствует.
+
+### Package для локальной разработки
 
 ```sh
-bun add opencode-usage-monitor
+bun add opencode-usage-monitor@3.0.0
 ```
-
-Используйте этот вариант, если package нужен в локальном development workspace, а не глобально внутри OpenCode.
 
 ### Локальный checkout
 
 ```sh
 git clone https://github.com/Mark1708/opencode-usage-monitor.git
 cd opencode-usage-monitor
-bun install
+bun install --frozen-lockfile
 bun run build:all
+bun run verify:package
 ```
 
-Build создаёт plugin entry и TUI bundle в `dist/`.
-
-### Локальная установка в OpenCode без npm publish
-
-Для тестирования release candidate соберите и упакуйте локальный checkout, затем установите созданный tarball в global OpenCode config:
-
-```sh
-bun run build:all
-npm pack
-opencode plugin "$(pwd)/opencode-usage-monitor-2.0.1.tgz" --global --force
-```
-
-Это обновляет server и TUI plugin entries, если ваша версия OpenCode CLI поддерживает plugin installer. Если команда `opencode plugin` недоступна, добавьте built package или tarball path в OpenCode config вручную.
+Build создаёт server definition и TUI bundle в `dist/`; package verifier
+записывает release candidate в `.artifacts/package.tgz`. Root shims в
+репозитории намеренно отсутствуют.
 
 ## Совместимость
 
 | Компонент | Поддерживаемая версия | Источник |
 |---|---|---|
-| Host app | OpenCode `>= v1.14.49` | README compatibility note |
-| Plugin API | `@opencode-ai/plugin >=1.15.0` | `package.json` peer dependency |
-| TUI runtime | `@opentui/keymap >=0.2.10`, `@opentui/solid >=0.2.10`, `solid-js >=1.9.12` | `package.json` peer dependencies |
-| Local runtime | Bun `>=1.1.0` | README requirements; Bun-based scripts в `package.json` |
-| TypeScript | `^5.5.0` | `package.json` dev dependency |
+| Host app | OpenCode `>=2.0.32` (smoke на `2.0.32` и `2.1.2`) | Release smoke contract |
+| Plugin API | `@opencode/plugin 2.0.32` | dependency в `package.json` |
+| Theme API | `@opencode/theme 2.0.32` | peer dependency в `package.json` |
+| TUI runtime | `@opentui/core >=0.5.17`, `@opentui/solid >=0.5.17`, `solid-js 1.9.12` | peer dependencies в `package.json` |
+| Local runtime | Bun `>=1.3.0` | engine в `package.json` |
+| TypeScript | `^5.5.0` | dev dependency в `package.json` |
+
 
 ## Конфигурация
 
@@ -175,16 +175,15 @@ Plugin сначала читает отдельный config-файл:
 
 ### OpenAI
 
-OpenAI показывает ChatGPT/Codex subscription quota windows из OpenCode OAuth session, а не из OpenAI Platform API keys. Plugin читает OpenCode auth storage и использует:
+OpenAI показывает ChatGPT/Codex subscription quota windows из активного
+OpenCode OAuth credential, а не из OpenAI Platform API keys. Plugin вызывает
+v2 credential client и сохраняет только нормализованную проекцию access token,
+expiry и `metadata.accountID`/`metadata.accountId`, необходимую provider.
 
-```text
-$.openai.access
-$.openai.accountId
-$.openai.expires
-$.openai.type == "oauth"
-```
-
-Auth file находится через OS-neutral OpenCode data paths, начиная с `${XDG_DATA_HOME}/opencode/auth.json`, затем `~/.local/share/opencode/auth.json`, legacy config locations и Windows local/roaming app data paths. `OPENAI_API_KEY` и `OPENAI_ADMIN_KEY` не используются для subscription quota.
+Plugin никогда не читает `auth.json`, не использует inactive credentials и не
+сохраняет refresh tokens, labels, произвольные metadata или raw host credential
+records. `OPENAI_API_KEY` и `OPENAI_ADMIN_KEY` не используются для subscription
+quota.
 
 ### Z.AI и GLM
 
@@ -271,7 +270,7 @@ Balance row показывает общий CNY amount; раскрытие provi
 - Если OpenAI показывает `auth missing`, `oauth missing`, `oauth expired` или `account id missing`, выполните `opencode providers login` для OpenAI и проверьте, что OpenCode auth entry содержит non-expired OAuth `openai.access`, `openai.accountId`, `openai.expires` и `openai.type: "oauth"`.
 - Если Z.AI показывает `auth missing`, настройте поддерживаемую Z.AI или Zhipu environment variable либо OpenCode auth entry.
 - Если Z.AI показывает `partial` на enterprise/org account, задайте `providers.zai.options.organization_id` и `providers.zai.options.project_id` или `ZHIPU_ORGANIZATION_ID` / `ZHIPU_PROJECT_ID`, чтобы использовался endpoint `?type=2`.
-- Если DeepSeek показывает `auth missing`, задайте `DEEPSEEK_API_KEY` или добавьте DeepSeek entry в OpenCode `auth.json`.
+- Если DeepSeek показывает `auth missing`, задайте `DEEPSEEK_API_KEY` или активируйте DeepSeek credential в OpenCode.
 - Если panel показывает `config` error, мигрируйте `usage-monitor.json` на `version: 2` shape и задайте хотя бы один provider в `providers`.
 - Если panel слишком широкий или узкий, измените `ui.width` в `usage-monitor.json`.
 - Если refresh выглядит устаревшим, уменьшите `refresh.interval_ms` или проверьте provider API connectivity.

@@ -60,6 +60,8 @@ export const zaiProviderDefinition = defineProvider<ZaiOptions>({
     defaultCandidates: [
       { source: "opencode", variant: "zai", name: "zai-coding-plan" },
       { source: "opencode", variant: "zai", name: "zai" },
+      { source: "opencode", variant: "zhipu", name: "zhipuai-coding-plan" },
+      { source: "opencode", variant: "zhipu", name: "zhipuai" },
       { source: "opencode", variant: "zhipu", name: "zhipu" },
       { source: "env", variant: "zai", name: "ZAI_API_KEY" },
       { source: "env", variant: "zai", name: "ZAI_CODING_PLAN_API_KEY" },
@@ -110,7 +112,15 @@ async function fetchZaiUsage(context: ProviderFetchContext<ZaiOptions>): Promise
     });
     if (response.status === 401 || response.status === 403) return statusProvider("forbidden", "forbidden");
     if (!response.ok) return statusProvider("error", `api ${response.status}`);
-    return normalizeZaiQuota(await response.json(), baseUrl);
+    const raw: unknown = await response.json();
+    const root = asRecord(raw);
+    if (
+      readNumber(root?.code) === 1000 &&
+      readString(root?.msg) === "Authentication Failed"
+    ) {
+      return statusProvider("forbidden", "forbidden");
+    }
+    return normalizeZaiQuota(raw, baseUrl);
   } catch (error: unknown) {
     const message = context.signal.aborted
       ? "cancelled"

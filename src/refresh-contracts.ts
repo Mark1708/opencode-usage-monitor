@@ -36,6 +36,7 @@ export type RefreshCoordinatorInput = Readonly<{
 export interface RefreshCoordinator {
 	refreshAll(): Promise<void>;
 	refreshProvider(id: string): Promise<void>;
+	invalidateCredentials(): void;
 	reconfigure(
 		providers: readonly SelectedResolvedProvider[],
 		policy: ResolvedRefreshConfigV2,

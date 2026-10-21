@@ -98,7 +98,7 @@ describe("v2 built-in provider catalog", () => {
 		).toBe("deepseek");
 	});
 
-	test("lists every supported OpenAI, Z.AI and DeepSeek credential alias in legacy discovery order", () => {
+	test("lists every supported OpenAI, Z.AI and DeepSeek credential alias in discovery order", () => {
 		const openai = BUILTIN_PROVIDER_CATALOG.find(
 			(entry) => entry.metadata.id === "openai",
 		);
@@ -115,6 +115,8 @@ describe("v2 built-in provider catalog", () => {
 		expect(zai?.credentialPolicy.defaultCandidates).toEqual([
 			{ source: "opencode", variant: "zai", name: "zai-coding-plan" },
 			{ source: "opencode", variant: "zai", name: "zai" },
+			{ source: "opencode", variant: "zhipu", name: "zhipuai-coding-plan" },
+			{ source: "opencode", variant: "zhipu", name: "zhipuai" },
 			{ source: "opencode", variant: "zhipu", name: "zhipu" },
 			{ source: "env", variant: "zai", name: "ZAI_API_KEY" },
 			{ source: "env", variant: "zai", name: "ZAI_CODING_PLAN_API_KEY" },

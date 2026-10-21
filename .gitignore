@@ -1,7 +1,6 @@
 node_modules/
 dist/
-*.js
-!.github/**/*.js
+.artifacts/
 .DS_Store
 .env
 .env.*

@@ -205,6 +205,64 @@ describe("native Z.AI provider definition", () => {
 		expect(captured.headers.Authorization).toBe("zai-token");
 	});
 
+	test("recognizes V2 Zhipu aliases as OpenCode credential candidates", () => {
+		const candidates =
+			zaiProviderDefinition.registration.credentialPolicy.defaultCandidates;
+		expect(
+			candidates
+				.filter((candidate) => candidate.source === "opencode")
+				.map((candidate) => candidate.name),
+		).toEqual([
+			"zai-coding-plan",
+			"zai",
+			"zhipuai-coding-plan",
+			"zhipuai",
+			"zhipu",
+		]);
+	});
+
+	test("maps semantic authentication failure to a terminal forbidden result after one JSON read", async () => {
+		const binding = parseBinding(zaiProviderDefinition.registration, {});
+		let jsonReads = 0;
+		Object.defineProperty(globalThis, "fetch", {
+			configurable: true,
+			writable: true,
+			value: async () => ({
+				ok: true,
+				status: 200,
+				json: async () => {
+					jsonReads += 1;
+					return {
+						code: 1000,
+						msg: "Authentication Failed",
+						data: { limits: [{ type: "TOKENS_LIMIT", percentage: 99 }] },
+					};
+				},
+			}),
+		});
+
+		const result = await binding.fetchUsage({
+			credential: {
+				secret: "revoked-zai-token",
+				source: "opencode",
+				variant: "zai",
+				epoch: 2,
+			},
+			signal: new AbortController().signal,
+			timeoutMs: 1000,
+		});
+
+		expect(jsonReads).toBe(1);
+		expect(result).toEqual({
+			id: "zai",
+			displayName: "z.ai",
+			status: "forbidden",
+			statusText: "forbidden",
+			windows: [],
+		});
+		expect(JSON.stringify(result)).not.toContain("Authentication Failed");
+	});
+
 	test("rejects incomplete enterprise options before fetch", () => {
 		const parsed = zaiProviderDefinition.registration.parseOptions({
 			plan: "enterprise",

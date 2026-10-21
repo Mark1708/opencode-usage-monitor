@@ -19,6 +19,8 @@ export type ProviderRuntimeStatus =
   | "refreshing"
   | "stale"
   | "needs_auth"
+  | "forbidden"
+  | "unsupported"
   | "config_error"
   | "error";
 

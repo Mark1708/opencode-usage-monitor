@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-10-19
+
+### Breaking
+
+- Requires OpenCode v2 and the `@opencode/plugin` v2 server/TUI contracts. OpenCode v1 users must remain on `opencode-usage-monitor@2.0.1`.
+- Removes legacy root entrypoint shims and direct `auth.json` discovery.
+
+### Added
+
+- Reads active OpenCode credentials through the v2 credential client, with generation-safe cache invalidation after credential changes.
+- Adds terminal `forbidden` and `unsupported` provider states that clear stale usage snapshots.
+- Adds Zhipu aliases `zhipuai-coding-plan` and `zhipuai`.
+- Adds strict host API, declaration-closure, packed-artifact, clean-import, and consumer type checks.
+
+### Changed
+
+- Uses stable tracked Solid render roots so provider, collapse, configuration, and live theme changes update without snapshot re-registration.
+- Makes configuration reload and teardown generation-safe.
+- Builds and publishes only `dist/index.js`, `dist/tui.js`, and their reachable declarations.
+- Moved required checks and exact-artifact npm releases from GitLab CI to GitHub Actions with Trusted Publishing/OIDC.
+
+### Fixed
+
+- Prevents stale credential-list and provider-fetch completions from repopulating state or cache after credential rotation.
+- Maps semantic Z.AI authentication failures to a sanitized terminal state.
+
 ## [2.0.1] - 2026-07-28
 
 ### Fixed
