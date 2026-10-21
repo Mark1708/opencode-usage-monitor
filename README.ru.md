@@ -18,15 +18,6 @@
 | Runtime | Bun `>= 1.3.0` для локальной разработки |
 | Проверки maintainer | `bun install --frozen-lockfile && bun run typecheck && bun run typecheck:host && bun test && bun run build:all && bun run verify:package` |
 
-## Скриншоты
-
-Plugin отображается внутри sidebar терминального UI OpenCode.
-
-![Collapsed sidebar view](assets/sidebar-collapsed.png)
-
-![Provider expanded view](assets/provider-expanded.png)
-
-![Fully expanded view](assets/fully-expanded.png)
 
 ## Сводка
 
@@ -157,6 +148,7 @@ Plugin сначала читает отдельный config-файл:
   },
   "providers": {
     "openai": {
+      "order": 10,
       "credential": { "source": "opencode", "entry": "openai" },
       "options": {
         "show_resets": true,
@@ -164,13 +156,16 @@ Plugin сначала читает отдельный config-файл:
       }
     },
     "zai": {
+      "order": 20,
       "credential": { "source": "opencode", "entry": "zai-coding-plan" },
       "options": { "plan": "personal" }
     },
     "deepseek": {
+      "order": 30,
       "credential": { "source": "opencode", "entry": "deepseek" }
     },
     "opencode-go": {
+      "order": 40,
       "credential": { "source": "opencode", "entry": "opencode-go" }
     }
   }
@@ -178,6 +173,10 @@ Plugin сначала читает отдельный config-файл:
 ```
 
 Объект `providers` управляет provider activation. Наличие provider включает его; отсутствие отключает и предотвращает credential, cache и network work для этого provider. Provider-specific refresh policies намеренно не поддерживаются.
+
+`providers.<id>.order` — опциональное целое число от `0` до `10000`. Если поле
+не задано, используется встроенный порядок: OpenAI (`10`), Z.AI (`20`),
+DeepSeek (`30`) и OpenCode Go (`40`).
 
 Альтернативно можно добавить секцию `usage_monitor` в `oh-my-openagent.json`. Значения из отдельного `usage-monitor.json` имеют приоритет.
 
@@ -275,7 +274,6 @@ Endpoint read-only и используется клиентами OpenCode Go, �
 
 ```text
 .
-├── assets/                    # Local screenshots для README
 ├── dist/                      # Собранный package output
 ├── src/
 │   ├── auth.ts                # OpenCode auth и environment credential discovery

@@ -18,15 +18,6 @@
 | Runtime | Bun `>= 1.3.0` for local development |
 | Maintainer checks | `bun install --frozen-lockfile && bun run typecheck && bun run typecheck:host && bun test && bun run build:all && bun run verify:package` |
 
-## Screenshots
-
-The plugin renders inside the OpenCode terminal UI sidebar.
-
-![Collapsed sidebar view](assets/sidebar-collapsed.png)
-
-![Provider expanded view](assets/provider-expanded.png)
-
-![Fully expanded view](assets/fully-expanded.png)
 
 ## Summary
 
@@ -157,6 +148,7 @@ Full documented shape:
   },
   "providers": {
     "openai": {
+      "order": 10,
       "credential": { "source": "opencode", "entry": "openai" },
       "options": {
         "show_resets": true,
@@ -164,13 +156,16 @@ Full documented shape:
       }
     },
     "zai": {
+      "order": 20,
       "credential": { "source": "opencode", "entry": "zai-coding-plan" },
       "options": { "plan": "personal" }
     },
     "deepseek": {
+      "order": 30,
       "credential": { "source": "opencode", "entry": "deepseek" }
     },
     "opencode-go": {
+      "order": 40,
       "credential": { "source": "opencode", "entry": "opencode-go" }
     }
   }
@@ -178,6 +173,10 @@ Full documented shape:
 ```
 
 The `providers` object controls provider activation. Presence enables a provider; omission disables it and prevents credential, cache, and network work for that provider. Provider-specific refresh policies are intentionally unsupported.
+
+`providers.<id>.order` is an optional integer from `0` to `10000`. When it is
+omitted, the built-in order is OpenAI (`10`), Z.AI (`20`), DeepSeek (`30`), and
+OpenCode Go (`40`).
 
 Alternatively, add a `usage_monitor` section to `oh-my-openagent.json`. Dedicated `usage-monitor.json` values take precedence.
 
@@ -274,7 +273,6 @@ The endpoint is read-only and currently used by OpenCode Go clients, but it is n
 
 ```text
 .
-├── assets/                    # Local screenshots used by this README
 ├── dist/                      # Built package output
 ├── src/
 │   ├── auth.ts                # OpenCode auth and environment credential discovery
