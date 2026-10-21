@@ -57,18 +57,19 @@ opencode plugin add opencode-usage-monitor@3.1.0
 opencode plugin add opencode-usage-monitor@3.1.0
 ```
 
-Эквивалентная явная конфигурация:
+Эквивалентная ручная конфигурация:
 
 ```jsonc
 {
-  "$schema": "https://opencode.ai/v2/cli.json",
+  "$schema": "https://opencode.ai/config.json",
   "plugins": ["opencode-usage-monitor@3.1.0"]
 }
 ```
 
-Добавьте package один раз: в `~/.config/opencode/cli.json` либо в v2-поле
-`plugins` файла `opencode.json(c)`. Package экспортирует отдельные v2 server и
-TUI definitions.
+Команда устанавливает package и добавляет его npm spec в `plugins` глобального
+файла `~/.config/opencode/opencode.json`. Для установки только в проекте
+добавьте ту же запись в `opencode.json(c)` в корне проекта. Package экспортирует
+отдельные v2 server и TUI definitions.
 
 Этот major не поддерживает OpenCode v1. Пользователям v1 нужно закрепить
 `opencode-usage-monitor@2.0.1`; dual-runtime compatibility shim отсутствует.
