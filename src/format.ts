@@ -90,9 +90,9 @@ export function formatProviderMetricsForState(
 	const allVisible = [...windowMetrics, ...detailMetrics];
 	const labelWidth = metricLabelWidth(allVisible);
 	return allVisible.map((metric) => {
-		const isDetail = !metric.key.startsWith("window-");
+		const shouldMute = !metric.key.startsWith("window-") && metric.tone === undefined;
 		const line = formatMetric(metric, labelWidth, width);
-		return isDetail ? { ...line, severity: "muted" as const } : line;
+		return shouldMute ? { ...line, severity: "muted" as const } : line;
 	});
 }
 

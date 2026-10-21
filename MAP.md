@@ -67,12 +67,15 @@ OpenAI requires top-level OpenCode OAuth metadata: `type: "oauth"`, `access`, `a
 
 ### OpenAI
 
-OpenAI uses `GET https://chatgpt.com/backend-api/wham/usage` with `Authorization: Bearer <access>` and `ChatGPT-Account-Id`.
+OpenAI uses `GET https://chatgpt.com/backend-api/wham/usage` with `Authorization: Bearer <access>` and `ChatGPT-Account-Id`. When reset expiry is enabled and an available reset credit exists, it also uses `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits`.
 
 - `plan_type` maps to `plan`.
 - Primary and secondary rate-limit windows map to canonical windows.
 - Additional reached limits map to critical `alerts`.
 - Credits and spend-control fields map to allowlisted typed `details`.
+- `rate_limit_reset_credits.available_count` maps to the summary `resets` detail unless `show_resets` is false.
+- `show_reset_expiry` is off by default. When enabled, the nearest available credit expiry maps to the reset suffix with normal (>24h), warning (<=24h), and critical (<=2h) severity.
+- Supplemental reset-expiry failures omit only the expiry; cancellation and timeout still terminate the complete provider request.
 - HTTP 401/403 maps to `forbidden`.
 - Incomplete but parseable payloads map to `partial`.
 

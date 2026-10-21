@@ -66,7 +66,7 @@ export function splitMetricValue(fullValue: string): { main: string; suffix?: st
   if (dotIndex === -1) return { main: fullValue };
 
   const potentialSuffix = fullValue.slice(dotIndex + 3);
-  if (potentialSuffix.startsWith("reset ")) {
+  if (potentialSuffix.startsWith("reset ") || potentialSuffix.startsWith("expires ")) {
     return { main: fullValue.slice(0, dotIndex), suffix: potentialSuffix };
   }
 

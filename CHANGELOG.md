@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added OpenCode Go rolling 5h, weekly, and monthly usage through the read-only Go usage endpoint.
 - Added deterministic `opencode-go` credential discovery with `OPENCODE_GO_API_KEY` as the explicit environment fallback.
+- Added available OpenAI Codex reset-credit counts with optional nearest-expiry lookup and severity.
 
 ## [3.0.0] - 2026-10-19
 
