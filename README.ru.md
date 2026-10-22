@@ -265,6 +265,14 @@ Endpoint read-only и используется клиентами OpenCode Go, �
 
 ## Использование
 
+### Экспериментальная поддержка подписки Grok
+
+Добавьте `"grok": {}` в `providers` файла `~/.config/opencode/usage-monitor.json`. Используется только активный OAuth credential OpenCode `xai`; API keys, переменные окружения, cookies и неактивные credentials не используются. Обновление токена остаётся ответственностью OpenCode.
+
+Endpoint `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` используется [официальным Grok CLI](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/extensions/billing.rs), но не документирован как стабильный публичный API. Явный `creditUsagePercent` отображается для указанного недельного/месячного периода; купленные кредиты показываются отдельно от подписки.
+
+Пропущенный процент считается нулём только при `isUnifiedBillingUser: true` и распознанном недельном/месячном `currentPeriod` с валидными границами, содержащими текущее время. Этот формат сверили с интерфейсом Grok: 0% и совпадающая дата сброса. Явные null/некорректные проценты и неполные/устаревшие периоды дают `usage unavailable`; дата сброса и prepaid balance остаются в раскрытых деталях. On-demand spend/cap не интерпретируется как квота подписки. Истёкший токен даёт `oauth expired`; HTTP 401/403 очищает устаревшие данные и даёт `forbidden`. Реальная проверка с OAuth OpenCode: HTTP 200, недельный период, пропущенный нулевой процент, нулевой prepaid balance. Ненулевые проценты проверены синтетическими тестами, не реальным ответом.
+
 - Нажмите на основной usage header, чтобы свернуть или раскрыть весь panel.
 - Нажмите на строки providers, чтобы независимо переключать provider details.
 - Используйте `/usage-refresh` или настроенный refresh keybind, по умолчанию `<leader>q`, для ручного refresh.

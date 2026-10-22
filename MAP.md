@@ -111,6 +111,8 @@ OpenCode Go uses `GET https://opencode.ai/zen/go/v1/usage` with `Authorization: 
 
 ## 7. Rendering rules
 
+The opt-in `grok` provider uses the active OpenCode `xai` OAuth credential and the official Grok CLI's undocumented billing endpoint. Valid subscription percentages produce windows; an omitted zero is accepted only for an active validated typed unified-billing period, verified against the live usage UI. Other missing usage stays partial with separate reset/prepaid details; on-demand spending never supplies a subscription percentage. There is no persistent account cache scope, browser fallback, or plugin-owned token refresh.
+
 Window ordering is deterministic:
 
 1. Reached limits first.

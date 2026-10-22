@@ -264,6 +264,14 @@ The endpoint is read-only and currently used by OpenCode Go clients, but it is n
 
 ## Usage
 
+### Experimental Grok subscription provider
+
+Add `"grok": {}` under `providers` in `~/.config/opencode/usage-monitor.json` to enable Grok subscription monitoring. It reads only the active OpenCode `xai` OAuth credential; API keys, environment variables, browser cookies, and inactive credentials are not used. Token refresh remains the host's responsibility.
+
+The provider calls `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`, the endpoint used by the [official Grok CLI](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/extensions/billing.rs). This is not a documented stable public API and may change. Explicit `creditUsagePercent` values map to the typed weekly/monthly period; purchased prepaid credits remain separate from the subscription allowance.
+
+An omitted percentage is accepted as zero only when `isUnifiedBillingUser` is true and `currentPeriod` has a recognized weekly/monthly type and valid bounds containing the current time. This zero-omission shape was verified against the Grok usage UI and its matching reset time. Explicit null/invalid percentages and incomplete/legacy periods show `usage unavailable`; a valid reset date and prepaid balance remain in expanded details. On-demand spend/cap is never treated as the included subscription pool. OAuth expiry shows `oauth expired`; HTTP 401/403 clears stale data and shows `forbidden`. Live-tested with OpenCode xAI OAuth: HTTP 200, weekly period, omitted zero percentage, zero prepaid balance. Nonzero percentages are covered by synthetic fixtures, not a live observation.
+
 - Click the main usage header to collapse or expand the full panel.
 - Click provider rows to toggle provider details independently.
 - Use `/usage-refresh` or the configured refresh keybind, default `<leader>q`, to refresh manually.

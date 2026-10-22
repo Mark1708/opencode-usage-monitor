@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Experimental Grok subscription usage through the official Grok CLI billing endpoint and the active OpenCode `xai` OAuth credential. Supports omitted zero percentages only for validated active unified-billing periods; no subscription usage is inferred from on-demand spending.
+
 ### Fixed
 
 - Corrected OpenCode v2 plugin configuration paths and schema references in the English and Russian installation guides.
