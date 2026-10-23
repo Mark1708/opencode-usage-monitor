@@ -34,6 +34,7 @@ import {
 	type V2CredentialClient,
 	type V2OpenCodeCredentialReader,
 } from "./auth-v2.js";
+import { GrokAuthRpc } from "./grok-auth-rpc.js";
 import type { CredentialSourceReaders } from "./credentials.js";
 import { providerToView } from "./views/index.js";
 import type { ProviderUsageView, TextTheme } from "./views/types.js";
@@ -551,8 +552,15 @@ type UsageTuiDependencies = Readonly<{
 const DEFAULT_TUI_DEPENDENCIES: UsageTuiDependencies = {
 	readRuntimeConfig,
 	createRuntimeCoordinator,
-	createCredentialReader: (client) =>
-		createV2OpenCodeCredentialReader({ client }),
+	createCredentialReader: (client) => {
+		const auth = client.rpc?.(GrokAuthRpc);
+		return createV2OpenCodeCredentialReader({
+			client,
+			prepareGrokCredential: auth
+				? () => auth.prepare({}, { signal: AbortSignal.timeout(15_000) })
+				: undefined,
+		});
+	},
 	watchConfig: (callback) => {
 		try {
 			return watch(CONFIG_PATH, callback);

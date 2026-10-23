@@ -8,6 +8,7 @@ export type V2CredentialEntry = CredentialEntry;
 
 export type V2CredentialClient = Readonly<{
 	credential: Pick<Plugin.Context["client"]["credential"], "list">;
+	rpc?: Plugin.Context["client"]["rpc"];
 }>;
 
 export interface V2OpenCodeCredentialReader {
@@ -20,6 +21,8 @@ export type V2CredentialSourceOptions = Readonly<{
 	/** How long normalized credential projections stay cached. */
 	ttlMs?: number;
 	now?: () => number;
+	/** Server-side host resolve; never an OAuth implementation in the TUI. */
+	prepareGrokCredential?: () => Promise<unknown>;
 }>;
 
 type ProjectionCache = Readonly<{
@@ -43,6 +46,7 @@ export function createV2OpenCodeCredentialReader(
 	let generation = 1;
 	let cache: ProjectionCache | undefined;
 	let inFlight: InFlightList | undefined;
+	let grokPreparation: Readonly<{ generation: number; promise: Promise<unknown> }> | undefined;
 
 	const listProjections = (
 		requestedGeneration: number,
@@ -80,6 +84,23 @@ export function createV2OpenCodeCredentialReader(
 		entry: string,
 	): Promise<OpenCodeCredential | undefined> => {
 		const requestedGeneration = generation;
+		if (entry === "xai" && options.prepareGrokCredential) {
+			if (grokPreparation?.generation !== requestedGeneration) {
+				const request = { generation: requestedGeneration, promise: options.prepareGrokCredential() };
+				grokPreparation = request;
+				const clear = () => { if (grokPreparation === request) grokPreparation = undefined; };
+				void request.promise.then(clear, clear);
+			}
+			const status = await grokPreparation.promise;
+			if (generation !== requestedGeneration) return undefined;
+			if (status === "failed") throw new Error("Unable to refresh Grok authorization through OpenCode");
+			if (status !== "ready") return undefined;
+			// list() itself does not renew OAuth. Read after host preparation and do
+			// not reuse a list/cache request that may have started before renewal.
+			const entries = await options.client.credential.list();
+			if (generation !== requestedGeneration) return undefined;
+			return projectActiveCredentials(entries).get(entry);
+		}
 		const projections = await listProjections(requestedGeneration);
 		if (generation !== requestedGeneration) return undefined;
 		return projections.get(entry);
