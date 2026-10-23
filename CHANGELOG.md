@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Grok quota refresh now asks the host's active-connection resolver to renew OAuth through a status-only server RPC before reading the credential projection. Expired access tokens no longer require a new login merely because the sidebar was the first consumer after expiry.
 - Corrected OpenCode v2 plugin configuration paths and schema references in the English and Russian installation guides.
 
 ## [3.1.0] - 2026-10-21
