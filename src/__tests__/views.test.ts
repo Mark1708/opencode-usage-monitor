@@ -279,7 +279,7 @@ describe("vertical usage view spec", () => {
 		const fiveHour = lines.find((line) => line.text.includes("5h"));
 		expect(fiveHour?.text).toContain("5h    1%");
 		expect(fiveHour?.text).not.toContain("reset");
-		expect(fiveHour?.suffix).toBe("reset 4h");
+		expect(fiveHour?.suffix).toMatch(/^reset 4h(?: \d+m)?$/);
 	});
 
 	test("12. Provider collapse state survives refresh", () => {

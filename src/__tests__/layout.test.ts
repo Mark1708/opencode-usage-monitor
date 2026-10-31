@@ -43,6 +43,18 @@ describe("layout pure functions", () => {
     expect(formatProviderStatusLine("openai", "loading", TEST_WIDTH)).toBe("  openai      loading");
   });
 
+  test("reset countdown reaches minutes and drops zero units", () => {
+    const now = nowMs();
+    const minute = 60_000;
+    expect(formatReset(now + 38 * minute, now)).toBe("reset 38m");
+    expect(formatReset(now + (4 * 60 + 12) * minute, now)).toBe("reset 4h 12m");
+    expect(formatReset(now + (5 * 24 * 60 + 3 * 60 + 12) * minute, now)).toBe("reset 5d 3h 12m");
+    expect(formatReset(now + 4 * 60 * minute, now)).toBe("reset 4h");
+    expect(formatReset(now + 6 * 24 * 60 * minute, now)).toBe("reset 6d");
+    expect(formatReset(now + (5 * 24 * 60 + 12) * minute, now)).toBe("reset 5d 12m");
+    expect(formatReset(now - minute, now)).toBe("reset now");
+  });
+
   test("metric layout helpers format compact vertical lines", () => {
     expect(metricLabelWidth([{ label: "plan" }, { label: "credits" }])).toBe(7);
     expect(formatMetricLine("plan", "prolite", 7, TEST_WIDTH)).toBe("    plan     prolite");

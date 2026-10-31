@@ -226,13 +226,26 @@ function formatMetric(
 		suffix === undefined ? 0 : Math.max(0, width - text.length - 3);
 	const visibleSuffix =
 		suffixBudget > 0 && suffix !== undefined
-			? truncateTo(suffix, suffixBudget)
+			? fitSuffix(suffix, suffixBudget)
 			: undefined;
 	return {
 		text,
 		severity: toneToSeverity(metric.tone),
 		...(visibleSuffix === undefined ? {} : { suffix: visibleSuffix }),
 	};
+}
+
+/**
+ * Trim a countdown by whole units instead of cutting a number in half, so a
+ * narrow row shows `reset 5d 18h` rather than `reset 5d 18h 1…`.
+ */
+function fitSuffix(suffix: string, budget: number): string {
+	if (suffix.length <= budget) return suffix;
+	if (!suffix.startsWith("reset ")) return truncateTo(suffix, budget);
+	const parts = suffix.split(" ");
+	while (parts.length > 2 && parts.join(" ").length > budget) parts.pop();
+	const fitted = parts.join(" ");
+	return fitted.length <= budget ? fitted : truncateTo(suffix, budget);
 }
 
 function providerTitleSeverity(view: ProviderUsageView): UsageSeverity {

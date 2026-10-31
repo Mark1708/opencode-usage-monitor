@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Reset countdowns now include minutes (`reset 4h 12m`, `reset 5d 3h 12m`) instead of a single unit, and drop the smallest unit when a row is too narrow instead of cutting a number mid-token.
+
 ### Fixed
 
 - Corrected OpenCode v2 plugin configuration paths and schema references in the English and Russian installation guides.

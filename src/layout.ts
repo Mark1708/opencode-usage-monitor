@@ -72,8 +72,17 @@ export function formatReset(resetAtMs: number | undefined, nowMs: number = Date.
   const minutes = Math.floor(diffMs / 60_000);
   if (minutes < 60) return `reset ${minutes}m`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `reset ${hours}h`;
-  return `reset ${Math.floor(hours / 24)}d`;
+  const restMinutes = minutes % 60;
+  if (hours < 24) return `reset ${joinUnits([[hours, "h"], [restMinutes, "m"]])}`;
+  const days = Math.floor(hours / 24);
+  return `reset ${joinUnits([[days, "d"], [hours % 24, "h"], [restMinutes, "m"]])}`;
+}
+
+function joinUnits(units: ReadonlyArray<readonly [number, string]>): string {
+  return units
+    .filter(([value]) => value > 0)
+    .map(([value, suffix]) => `${value}${suffix}`)
+    .join(" ");
 }
 
 export function formatPercent(value: number | undefined): string {
