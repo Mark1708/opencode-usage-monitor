@@ -6,7 +6,7 @@ export const GrokAuthRpc = Rpc.define({
 	methods: {
 		prepare: {
 			input: { type: "object", additionalProperties: false },
-			output: { type: "string", enum: ["ready", "missing", "failed"] },
+			output: { type: "string", enum: ["ready", "missing", "failed", "region-blocked"] },
 		},
 	},
 	events: {},

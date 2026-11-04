@@ -9,6 +9,7 @@ import { createProviderCacheV2 } from "../provider-cache.js";
 import { createRefreshCoordinator } from "../refresh.js";
 import { parseUsageConfigV2 } from "../runtime-config.js";
 import { mockJsonResponse, restoreFetch } from "./_helpers.js";
+import { grokProviderDefinition } from "../providers/grok.js";
 
 afterEach(restoreFetch);
 
@@ -19,6 +20,59 @@ const oauth = (access: string, expires: number) => Credential.OAuth.make({
 });
 
 describe("Grok host-managed OAuth renewal", () => {
+	test.each([false, true])("classifies regional OAuth denial without returning HTML or secrets (wrapped: %s)", async (wrapped) => {
+		const raw = new Error('xAI request failed (403): <!doctype html><p>This service is not available in your region.</p><script>private-access-must-not-leak</script>');
+		const auth = createGrokAuthPreparation({ active: async () => connection, resolve: async () => {
+			throw wrapped ? new Error("Authorization failed", { cause: raw }) : raw;
+		} });
+		expect(await auth.prepare()).toBe("region-blocked");
+	});
+	test("does not mislabel an arbitrary HTTP 403 as a regional denial", async () => {
+		const auth = createGrokAuthPreparation({ active: async () => connection, resolve: async () => {
+			throw new Error("xAI request failed (403): access denied private-access-must-not-leak");
+		} });
+		expect(await auth.prepare()).toBe("failed");
+	});
+	test("does not evaluate error getters or loop on cyclic causes", async () => {
+		let getterCalls = 0;
+		const error = Object.defineProperty({}, "message", { get() { getterCalls++; throw new Error("secret"); } });
+		Object.assign(error, { cause: error });
+		const auth = createGrokAuthPreparation({ active: async () => connection, resolve: async () => { throw error; } });
+		expect(await auth.prepare()).toBe("failed");
+		expect(getterCalls).toBe(0);
+	});
+	test("renders the allowlisted region reason through RPC reader, resolver, and coordinator", async () => {
+		const config = parseUsageConfigV2({ version: 2, providers: { grok: {} }, refresh: { mode: "manual" } });
+		if (!config.ok) throw new Error("invalid config");
+		const auth = createGrokAuthPreparation({ active: async () => connection, resolve: async () => {
+			throw new Error("xAI request failed (403): <p>This service is not available in your region.</p><script>private-access-must-not-leak</script>");
+		} });
+		let lists = 0;
+		const reader = createV2OpenCodeCredentialReader({ client: { credential: { list: async () => { lists++; return []; } } }, prepareGrokCredential: auth.prepare });
+		const resolver = createCredentialResolver({ readOpenCodeEntry: reader, readEnv: () => undefined });
+		const coordinator = createRefreshCoordinator({ providers: config.value.providers, policy: config.value.refresh, credentialResolver: resolver, cache: createProviderCacheV2() });
+		try {
+			await coordinator.refreshAll();
+			expect(coordinator.getStates()[0]).toMatchObject({ status: "error", message: "xAI unavailable in your region" });
+			expect(JSON.stringify(coordinator.getStates())).not.toContain("private-access-must-not-leak");
+			expect(JSON.stringify(coordinator.getStates())).not.toContain("<script>");
+			expect(lists).toBe(0);
+		} finally {
+			coordinator.dispose();
+			auth.dispose();
+		}
+	});
+	test("never forwards a reason or raw message from an arbitrary source error", async () => {
+		const resolver = createCredentialResolver({ readOpenCodeEntry: async () => {
+			throw Object.assign(new Error("private-access-must-not-leak"), { reason: "region-blocked" });
+		}, readEnv: () => undefined });
+		try {
+			const result = await resolver.resolve(grokProviderDefinition.registration);
+			expect(result).toMatchObject({ ok: false, kind: "source" });
+			expect(result).not.toHaveProperty("reason");
+			expect(JSON.stringify(result)).not.toContain("private-access-must-not-leak");
+		} finally { resolver.dispose(); }
+	});
 	test("recovers through the coordinator when host renewal emits credential.updated mid-refresh", async () => {
 		const config = parseUsageConfigV2({ version: 2, providers: { grok: {} }, refresh: { mode: "manual" } });
 		if (!config.ok) throw new Error("invalid config");
@@ -132,7 +186,7 @@ describe("Grok host-managed OAuth renewal", () => {
 		expect(await auth.prepare()).toBe("missing");
 	});
 	test("RPC declares status-only output and accepts no account or token input", () => {
-		expect(GrokAuthRpc.methods.prepare.output).toEqual({ type: "string", enum: ["ready", "missing", "failed"] });
+		expect(GrokAuthRpc.methods.prepare.output).toEqual({ type: "string", enum: ["ready", "missing", "failed", "region-blocked"] });
 		expect(GrokAuthRpc.methods.prepare.input).toEqual({ type: "object", additionalProperties: false });
 	});
 	test("re-reads the host credential after renewal even within the projection TTL", async () => {
@@ -173,7 +227,7 @@ describe("Grok host-managed OAuth renewal", () => {
 	test("a host failure never falls back to a stale cached token", async () => {
 		let lists = 0;
 		const reader = createV2OpenCodeCredentialReader({ client: { credential: { list: async () => { lists++; return []; } } }, prepareGrokCredential: async () => "failed" });
-		await expect(reader("xai")).rejects.toThrow("Unable to refresh Grok authorization through OpenCode");
+		await expect(reader("xai")).rejects.toThrow("xAI OAuth refresh failed");
 		expect(lists).toBe(0);
 	});
 });

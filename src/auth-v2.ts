@@ -3,6 +3,7 @@ import type { Plugin } from "@opencode/plugin/tui";
 
 import type { OpenCodeCredential } from "./auth.js";
 import { asRecord } from "./providers/shared.js";
+import { SafeCredentialSourceError } from "./credential-source-error.js";
 
 export type V2CredentialEntry = CredentialEntry;
 
@@ -93,7 +94,8 @@ export function createV2OpenCodeCredentialReader(
 			}
 			const status = await grokPreparation.promise;
 			if (generation !== requestedGeneration) return undefined;
-			if (status === "failed") throw new Error("Unable to refresh Grok authorization through OpenCode");
+			if (status === "region-blocked") throw new SafeCredentialSourceError("region-blocked");
+			if (status === "failed") throw new SafeCredentialSourceError("refresh-failed");
 			if (status !== "ready") return undefined;
 			// list() itself does not renew OAuth. Read after host preparation and do
 			// not reuse a list/cache request that may have started before renewal.

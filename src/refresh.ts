@@ -1,5 +1,6 @@
 import type { ResolvedRefreshConfigV2 } from "./config-types.js";
 import type { CredentialResolution } from "./credentials.js";
+import { CREDENTIAL_SOURCE_MESSAGES } from "./credential-source-error.js";
 import type { CredentialLease } from "./providers/contracts.js";
 import type { StandardUsageProvider } from "./providers/types.js";
 import {
@@ -526,7 +527,9 @@ class DeterministicRefreshCoordinator implements RefreshCoordinator {
 				status,
 				lastAttemptAt: completedAt,
 				nextDueAt: automaticDue(this.policy, completedAt),
-				message: CREDENTIAL_MESSAGES[resolution.kind],
+				message: resolution.kind === "source" && resolution.reason
+					? CREDENTIAL_SOURCE_MESSAGES[resolution.reason] ?? CREDENTIAL_MESSAGES.source
+					: CREDENTIAL_MESSAGES[resolution.kind],
 			}),
 		);
 	}
