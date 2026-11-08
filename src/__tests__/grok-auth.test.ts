@@ -54,6 +54,7 @@ describe("Grok host-managed OAuth renewal", () => {
 		try {
 			await coordinator.refreshAll();
 			expect(coordinator.getStates()[0]).toMatchObject({ status: "error", message: "xAI unavailable in your region" });
+			expect(coordinator.getStates()[0]?.nextDueAt).toBeUndefined();
 			expect(JSON.stringify(coordinator.getStates())).not.toContain("private-access-must-not-leak");
 			expect(JSON.stringify(coordinator.getStates())).not.toContain("<script>");
 			expect(lists).toBe(0);
@@ -72,6 +73,75 @@ describe("Grok host-managed OAuth renewal", () => {
 			expect(result).not.toHaveProperty("reason");
 			expect(JSON.stringify(result)).not.toContain("private-access-must-not-leak");
 		} finally { resolver.dispose(); }
+	});
+	test.each(["region", "network"])("automatically recovers from %s OAuth failure after VPN is enabled", async (failure) => {
+		const config = parseUsageConfigV2({ version: 2, providers: { grok: {} } });
+		if (!config.ok) throw new Error("invalid config");
+		let online = false;
+		let resolves = 0;
+		let lists = 0;
+		let now = 1_000;
+		let timer: { callback: () => void; dueAt: number } | undefined;
+		const stored = oauth("recovered-access", Date.now() + 3_600_000);
+		const auth = createGrokAuthPreparation({ active: async () => connection, resolve: async () => {
+			resolves++;
+			if (!online) throw new Error(failure === "region"
+				? "This service is not available in your region." : "network unavailable");
+			return stored;
+		} });
+		const reader = createV2OpenCodeCredentialReader({
+			client: { credential: { list: async () => {
+				lists++;
+				return [{ id: connection.id, integrationID: Integration.ID.make("xai"), label: "xai", active: true,
+					value: { type: "oauth", access: stored.access, refresh: stored.refresh, expires: stored.expires, methodID: stored.methodID },
+				}];
+			} } }, prepareGrokCredential: auth.prepare,
+		});
+		const coordinator = createRefreshCoordinator({
+			providers: config.value.providers, policy: config.value.refresh,
+			credentialResolver: createCredentialResolver({ readOpenCodeEntry: reader, readEnv: () => undefined }),
+			cache: createProviderCacheV2(), clock: { now: () => now },
+			timers: {
+				setTimeout(callback, delayMs) { timer = { callback, dueAt: now + delayMs }; return timer; },
+				clearTimeout(handle) { if (timer === handle) timer = undefined; },
+			},
+		});
+		const settle = async () => { for (let turn = 0; turn < 50; turn++) await Promise.resolve(); };
+		const advance = async (milliseconds: number) => {
+			now += milliseconds;
+			if (timer && timer.dueAt <= now) {
+				const callback = timer.callback;
+				timer = undefined;
+				callback();
+			}
+			await settle();
+		};
+		mockJsonResponse({ config: { creditUsagePercent: 7 } });
+		try {
+			await settle();
+			expect(coordinator.getStates()[0]).toMatchObject({ status: "error", nextDueAt: 61_000 });
+			expect(lists).toBe(0);
+			await advance(59_999);
+			expect(resolves).toBe(1);
+			await advance(1);
+			expect(resolves).toBe(2);
+			expect(coordinator.getStates()[0]).toMatchObject({ status: "error", nextDueAt: 121_000 });
+			online = true;
+			await advance(60_000);
+			expect(resolves).toBe(3);
+			expect(lists).toBe(1);
+			expect(coordinator.getStates()[0]).toMatchObject({
+				status: "ready", nextDueAt: now + config.value.refresh.interval_ms,
+				snapshot: { windows: [{ percentage: 7 }] },
+			});
+			expect(coordinator.getStates()[0]?.message).toBeUndefined();
+		} finally {
+			coordinator.dispose();
+			auth.dispose();
+		}
+		expect(timer).toBeUndefined();
+		await advance(300_000);
+		expect(resolves).toBe(3);
 	});
 	test("recovers through the coordinator when host renewal emits credential.updated mid-refresh", async () => {
 		const config = parseUsageConfigV2({ version: 2, providers: { grok: {} }, refresh: { mode: "manual" } });

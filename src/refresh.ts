@@ -510,6 +510,11 @@ class DeterministicRefreshCoordinator implements RefreshCoordinator {
 		const previous = this.states.get(id);
 		const requestSequence = (previous?.requestSequence ?? 0) + 1;
 		const status = credentialErrorStatus(resolution.kind);
+		// A VPN/network change emits no credential event. Retry transient Grok
+		// preparation failures once a minute instead of waiting the usage interval.
+		const nextDueAt = this.policy.mode === "automatic"
+			&& resolution.kind === "source" && resolution.reason
+			? completedAt + 60_000 : automaticDue(this.policy, completedAt);
 		const context = this.contexts.get(id);
 		if (context)
 			this.contexts = new Map(this.contexts).set(
@@ -526,7 +531,7 @@ class DeterministicRefreshCoordinator implements RefreshCoordinator {
 				credentialEpoch: resolution.epoch,
 				status,
 				lastAttemptAt: completedAt,
-				nextDueAt: automaticDue(this.policy, completedAt),
+				nextDueAt,
 				message: resolution.kind === "source" && resolution.reason
 					? CREDENTIAL_SOURCE_MESSAGES[resolution.reason] ?? CREDENTIAL_MESSAGES.source
 					: CREDENTIAL_MESSAGES[resolution.kind],
