@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Wait for server plugin activation in the TUI's explicit location before calling the Grok OAuth RPC. Cold starts no longer report `Credential source is unavailable` merely because the RPC has not registered yet; cleanup aborts pending readiness work.
 - Retry Grok credential-source failures, including startup RPC and credential-list failures, every minute in automatic mode instead of waiting the full usage refresh interval. Recovery no longer requires a manual `/usage-refresh`; manual mode remains unchanged.
 - Preserve allowlisted Grok OAuth failure reasons through the credential resolver: regional denial shows `xAI unavailable in your region`, other renewal failures show `xAI OAuth refresh failed`, without exposing upstream HTML or secrets.
 - Grok quota refresh now asks the host's active-connection resolver to renew OAuth through a status-only server RPC before reading the credential projection. Expired access tokens no longer require a new login merely because the sidebar was the first consumer after expiry.

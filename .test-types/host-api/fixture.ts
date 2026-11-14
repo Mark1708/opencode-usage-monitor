@@ -28,6 +28,7 @@ export const tui = TuiPlugin.define({
   id: "fixture.tui",
   setup(context) {
     const auth = context.client.rpc(AuthRpc);
+    const location = context.location ?? context.data.location.default();
     const removeUpdated = context.data.on("credential.updated", () => undefined);
     const removeSwitched = context.data.on("credential.switched", (event) => {
       void event.data.integrationID;
@@ -54,7 +55,9 @@ export const tui = TuiPlugin.define({
         title: "Refresh fixture",
         slash: { name: "fixture-refresh" },
         run: async () => {
-          await auth.prepare({});
+          const signal = AbortSignal.timeout(15_000);
+          await context.client.plugin.list({ location }, { signal });
+          await auth.prepare({}, { location, signal });
           const credentials = await context.client.credential.list();
           context.ui.toast.show({
             title: "Fixture",

@@ -268,7 +268,9 @@ The endpoint is read-only and currently used by OpenCode Go clients, but it is n
 
 Add `"grok": {}` under `providers` in `~/.config/opencode/usage-monitor.json` to enable Grok subscription monitoring. It reads only the active OpenCode `xai` OAuth credential; API keys, environment variables, browser cookies, and inactive credentials are not used.
 
-In automatic mode, regional denials and OAuth renewal failures retry credential preparation once a minute. After enabling a VPN, usage recovers on the next successful attempt without restarting or signing in again. Success restores the normal usage interval; manual mode never retries automatically.
+Before preparing Grok credentials, the TUI waits for server plugins to activate via `client.plugin.list` in its explicit location, then calls the RPC in that same location. This prevents a cold-start `rpc.unavailable` response from being misreported as a credential failure. Readiness and RPC share a 15-second timeout; plugin cleanup aborts pending readiness work.
+
+In automatic mode, credential-source failures (including RPC/credential-list failures, regional denials, and OAuth renewal failures) retry credential preparation once a minute. After enabling a VPN, usage recovers on the next successful attempt without restarting or signing in again. Success restores the normal usage interval; manual mode never retries automatically.
 
 Before each Grok credential read, the TUI calls the companion server plugin's status-only `usage-monitor.grok-auth.prepare` RPC. The server invokes OpenCode's `integration.connection.active("xai")` and `integration.connection.resolve()` so the host can renew expiring/expired OAuth and persist rotation. The TUI then re-reads the active projection instead of using its pre-renewal cache. The plugin never implements a token refresh exchange or handles refresh tokens; it does not send model prompts to renew access. Concurrent preparations are coalesced, and credential-change events invalidate older refresh work. The server plugin must be loaded on the connected OpenCode server, including when using a remote server.
 

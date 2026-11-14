@@ -31,7 +31,6 @@ import { readUsageConfigV2 } from "./runtime-config.js";
 import { sanitizeError } from "./sanitize.js";
 import {
 	createV2OpenCodeCredentialReader,
-	type V2CredentialClient,
 	type V2OpenCodeCredentialReader,
 } from "./auth-v2.js";
 import { GrokAuthRpc } from "./grok-auth-rpc.js";
@@ -542,7 +541,9 @@ type UsageTuiDependencies = Readonly<{
 		readers: CredentialSourceReaders,
 	) => RefreshCoordinator;
 	createCredentialReader: (
-		client: V2CredentialClient,
+		client: TuiContext["client"],
+		location: NonNullable<TuiContext["location"]>,
+		signal: AbortSignal,
 	) => V2OpenCodeCredentialReader;
 	watchConfig: (callback: () => void) => ConfigWatcher | undefined;
 	createReloadTrigger: (callback: () => void) => ReloadTrigger;
@@ -552,12 +553,20 @@ type UsageTuiDependencies = Readonly<{
 const DEFAULT_TUI_DEPENDENCIES: UsageTuiDependencies = {
 	readRuntimeConfig,
 	createRuntimeCoordinator,
-	createCredentialReader: (client) => {
+	createCredentialReader: (client, location, lifecycleSignal) => {
 		const auth = client.rpc?.(GrokAuthRpc);
 		return createV2OpenCodeCredentialReader({
 			client,
 			prepareGrokCredential: auth
-				? () => auth.prepare({}, { signal: AbortSignal.timeout(15_000) })
+				? async () => {
+					const signal = AbortSignal.any([lifecycleSignal, AbortSignal.timeout(15_000)]);
+					signal.throwIfAborted();
+					// RPC lookup can precede server plugin activation on a cold location.
+					// Wait for that location's plugins, not the server's default directory.
+					await client.plugin.list({ location }, { signal });
+					signal.throwIfAborted();
+					return auth.prepare({}, { location, signal });
+				}
 				: undefined,
 		});
 	},
@@ -604,7 +613,12 @@ export function createUsageTuiDefinition(
 			>(new Set());
 			let fingerprint = initialRuntime.fingerprint;
 			let providerCollapseInitialized = false;
-			const credentialReader = dependencies.createCredentialReader(context.client);
+			const credentialController = new AbortController();
+			const credentialReader = dependencies.createCredentialReader(
+				context.client,
+				context.location ?? context.data.location.default(),
+				credentialController.signal,
+			);
 			const credentialReaders: CredentialSourceReaders = Object.freeze({
 				readOpenCodeEntry: credentialReader,
 				readEnv: (name: string) => process.env[name],
@@ -777,6 +791,7 @@ export function createUsageTuiDefinition(
 			return () => {
 				if (disposed) return;
 				disposed = true;
+				credentialController.abort();
 				reloadGeneration += 1;
 				reloadTrigger.cancel();
 				unregisterSlot();
