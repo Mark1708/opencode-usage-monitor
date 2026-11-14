@@ -143,6 +143,88 @@ describe("Grok host-managed OAuth renewal", () => {
 		await advance(300_000);
 		expect(resolves).toBe(3);
 	});
+	test.each([
+		{ failure: "rpc", mode: "automatic" },
+		{ failure: "credential-list", mode: "automatic" },
+		{ failure: "rpc", mode: "manual" },
+		{ failure: "credential-list", mode: "manual" },
+	] as const)("handles startup $failure failure in $mode mode", async ({ failure, mode }) => {
+		const config = parseUsageConfigV2({ version: 2, providers: { grok: {} }, refresh: { mode } });
+		if (!config.ok) throw new Error("invalid config");
+		let available = false;
+		let preparations = 0;
+		let lists = 0;
+		let now = 1_000;
+		let timer: { callback: () => void; dueAt: number } | undefined;
+		const stored = oauth("startup-access", Date.now() + 3_600_000);
+		const reader = createV2OpenCodeCredentialReader({
+			prepareGrokCredential: async () => {
+				preparations++;
+				if (!available && failure === "rpc") throw new Error("startup RPC unavailable private-must-not-leak");
+				return "ready";
+			},
+			client: { credential: { list: async () => {
+				lists++;
+				if (!available && failure === "credential-list") throw new Error("startup list unavailable private-must-not-leak");
+				return [{ id: connection.id, integrationID: Integration.ID.make("xai"), label: "xai", active: true,
+					value: { type: "oauth", access: stored.access, expires: stored.expires, refresh: stored.refresh, methodID: stored.methodID },
+				}];
+			} } },
+		});
+		const coordinator = createRefreshCoordinator({
+			providers: config.value.providers, policy: config.value.refresh,
+			credentialResolver: createCredentialResolver({ readOpenCodeEntry: reader, readEnv: () => undefined }),
+			cache: createProviderCacheV2(), clock: { now: () => now },
+			timers: {
+				setTimeout(callback, delayMs) { timer = { callback, dueAt: now + delayMs }; return timer; },
+				clearTimeout(handle) { if (timer === handle) timer = undefined; },
+			},
+		});
+		const settle = async () => { for (let turn = 0; turn < 50; turn++) await Promise.resolve(); };
+		const advance = async (milliseconds: number) => {
+			now += milliseconds;
+			if (timer && timer.dueAt <= now) {
+				const callback = timer.callback;
+				timer = undefined;
+				callback();
+			}
+			await settle();
+		};
+		mockJsonResponse({ config: { creditUsagePercent: 7 } });
+		try {
+			// TUI startup also requests refreshAll while constructor bootstrap is pending.
+			await coordinator.refreshAll();
+			await settle();
+			expect(preparations).toBe(1);
+			expect(coordinator.getStates()[0]).toMatchObject({
+				status: "error", message: "Credential source is unavailable",
+			});
+			expect(coordinator.getStates()[0]?.nextDueAt).toBe(mode === "automatic" ? 61_000 : undefined);
+			expect(JSON.stringify(coordinator.getStates())).not.toContain("private-must-not-leak");
+			expect(lists).toBe(failure === "rpc" ? 0 : 2);
+			available = true;
+			await advance(59_999);
+			expect(preparations).toBe(1);
+			await advance(1);
+			if (mode === "manual") {
+				expect(timer).toBeUndefined();
+				expect(preparations).toBe(1);
+				expect(coordinator.getStates()[0]?.status).toBe("error");
+				await coordinator.refreshAll();
+			}
+			expect(preparations).toBe(2);
+			expect(coordinator.getStates()[0]).toMatchObject({
+				status: "ready", snapshot: { windows: [{ percentage: 7 }] },
+			});
+			expect(coordinator.getStates()[0]?.message).toBeUndefined();
+			expect(coordinator.getStates()[0]?.nextDueAt).toBe(mode === "automatic" ? now + config.value.refresh.interval_ms : undefined);
+		} finally {
+			coordinator.dispose();
+		}
+		expect(timer).toBeUndefined();
+		await advance(300_000);
+		expect(preparations).toBe(2);
+	});
 	test("recovers through the coordinator when host renewal emits credential.updated mid-refresh", async () => {
 		const config = parseUsageConfigV2({ version: 2, providers: { grok: {} }, refresh: { mode: "manual" } });
 		if (!config.ok) throw new Error("invalid config");
