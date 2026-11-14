@@ -264,6 +264,22 @@ The endpoint is read-only and currently used by OpenCode Go clients, but it is n
 
 ## Usage
 
+### Experimental Grok subscription provider
+
+Add `"grok": {}` under `providers` in `~/.config/opencode/usage-monitor.json` to enable Grok subscription monitoring. It reads only the active OpenCode `xai` OAuth credential; API keys, environment variables, browser cookies, and inactive credentials are not used.
+
+Before preparing Grok credentials, the TUI waits for server plugins to activate via `client.plugin.list` in its explicit location, then calls the RPC in that same location. This prevents a cold-start `rpc.unavailable` response from being misreported as a credential failure. Readiness and RPC share a 15-second timeout; plugin cleanup aborts pending readiness work.
+
+In automatic mode, credential-source failures (including RPC/credential-list failures, regional denials, and OAuth renewal failures) retry credential preparation once a minute. After enabling a VPN, usage recovers on the next successful attempt without restarting or signing in again. Success restores the normal usage interval; manual mode never retries automatically.
+
+Before each Grok credential read, the TUI calls the companion server plugin's status-only `usage-monitor.grok-auth.prepare` RPC. The server invokes OpenCode's `integration.connection.active("xai")` and `integration.connection.resolve()` so the host can renew expiring/expired OAuth and persist rotation. The TUI then re-reads the active projection instead of using its pre-renewal cache. The plugin never implements a token refresh exchange or handles refresh tokens; it does not send model prompts to renew access. Concurrent preparations are coalesced, and credential-change events invalidate older refresh work. The server plugin must be loaded on the connected OpenCode server, including when using a remote server.
+
+The provider calls `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`, the endpoint used by the [official Grok CLI](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/extensions/billing.rs). This is not a documented stable public API and may change. Explicit `creditUsagePercent` values map to the typed weekly/monthly period; purchased prepaid credits remain separate from the subscription allowance.
+
+During host OAuth renewal, a regional service denial is reported as `xAI unavailable in your region`; other renewal failures show `xAI OAuth refresh failed`. These are allowlisted reason codes carried through the credential resolver, not raw upstream error messages. HTML, scripts, and credential material never enter the RPC output or render state. This reports the refusal accurately; it does not remove an upstream regional restriction or imply missing credentials.
+
+An omitted percentage is accepted as zero only when `isUnifiedBillingUser` is true and `currentPeriod` has a recognized weekly/monthly type and valid bounds containing the current time. This zero-omission shape was verified against the Grok usage UI and its matching reset time. Explicit null/invalid percentages and incomplete/legacy periods show `usage unavailable`; a valid reset date and prepaid balance remain in expanded details. On-demand spend/cap is never treated as the included subscription pool. Failed host renewal shows a credential-source error; missing/revoked authorization may still require signing in. HTTP 401/403 clears stale data and shows `forbidden`. Live-tested with OpenCode xAI OAuth: HTTP 200, weekly period, both omitted zero and explicit 1% usage, zero prepaid balance, and automatic renewal of an already-expired token without signing in or sending a model request. Monthly periods remain fixture-tested only.
+
 - Click the main usage header to collapse or expand the full panel.
 - Click provider rows to toggle provider details independently.
 - Use `/usage-refresh` or the configured refresh keybind, default `<leader>q`, to refresh manually.

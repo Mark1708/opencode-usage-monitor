@@ -83,6 +83,7 @@ describe("v2 built-in provider catalog", () => {
 			"zai",
 			"deepseek",
 			"opencode-go",
+			"grok",
 		]);
 	});
 
