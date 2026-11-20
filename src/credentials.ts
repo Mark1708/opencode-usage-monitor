@@ -12,6 +12,7 @@ import type {
 	ValidationResult,
 } from "./providers/contracts.js";
 import { hasSecretPattern, looksSecretKey } from "./sanitize.js";
+import { SafeCredentialSourceError, type CredentialSourceReason } from "./credential-source-error.js";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -35,6 +36,7 @@ export type CredentialResolution =
 			kind: "missing" | "config" | "source" | "superseded";
 			message: string;
 			epoch: number;
+			reason?: CredentialSourceReason;
 	  }>;
 
 export interface CredentialResolver {
@@ -68,7 +70,7 @@ type CandidateResolution =
 			metadata?: Readonly<Record<string, string>>;
 	  }>
 	| Readonly<{ kind: "missing" }>
-	| Readonly<{ kind: "source-error" }>;
+	| Readonly<{ kind: "source-error"; reason?: CredentialSourceReason }>;
 
 const METADATA_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const METADATA_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/;
@@ -118,6 +120,7 @@ export function createCredentialResolver(
 				"source",
 				"Unable to read credential source",
 				next.epoch,
+				resolved.reason,
 			);
 		}
 		const next = nextCredentialState(states.get(identity), resolved);
@@ -228,7 +231,7 @@ async function readCandidate(
 			secret: string;
 			metadata?: Readonly<Record<string, string>>;
 	  }>
-	| Readonly<{ kind: "missing" | "source-error" }>
+	| Readonly<{ kind: "missing" | "source-error"; reason?: CredentialSourceReason }>
 > {
 	try {
 		const read =
@@ -237,8 +240,11 @@ async function readCandidate(
 				: await readers.readOpenCodeEntry(candidate.name);
 		const credential = normalizeCredentialRead(read);
 		return credential ? { kind: "found", ...credential } : { kind: "missing" };
-	} catch (_error: unknown) {
-		return { kind: "source-error" };
+	} catch (error: unknown) {
+		return {
+			kind: "source-error",
+			...(error instanceof SafeCredentialSourceError ? { reason: error.reason } : {}),
+		};
 	}
 }
 
@@ -336,8 +342,9 @@ function resolutionError(
 	kind: "missing" | "config" | "source" | "superseded",
 	message: string,
 	epoch: number,
+	reason?: CredentialSourceReason,
 ): CredentialResolution {
-	return Object.freeze({ ok: false, kind, message, epoch });
+	return Object.freeze({ ok: false, kind, message, epoch, ...(reason ? { reason } : {}) });
 }
 
 function validateMetadata(

@@ -1,5 +1,6 @@
 import type { ResolvedRefreshConfigV2 } from "./config-types.js";
 import type { CredentialResolution } from "./credentials.js";
+import { CREDENTIAL_SOURCE_MESSAGES } from "./credential-source-error.js";
 import type { CredentialLease } from "./providers/contracts.js";
 import type { StandardUsageProvider } from "./providers/types.js";
 import {
@@ -509,6 +510,12 @@ class DeterministicRefreshCoordinator implements RefreshCoordinator {
 		const previous = this.states.get(id);
 		const requestSequence = (previous?.requestSequence ?? 0) + 1;
 		const status = credentialErrorStatus(resolution.kind);
+		// Startup RPC/list failures have no OAuth reason and may emit no credential
+		// event on recovery. Retry all Grok credential-source failures once a minute,
+		// not only failures classified by the server-side OAuth preparation.
+		const nextDueAt = this.policy.mode === "automatic"
+			&& resolution.kind === "source" && id === "grok"
+			? completedAt + 60_000 : automaticDue(this.policy, completedAt);
 		const context = this.contexts.get(id);
 		if (context)
 			this.contexts = new Map(this.contexts).set(
@@ -525,8 +532,10 @@ class DeterministicRefreshCoordinator implements RefreshCoordinator {
 				credentialEpoch: resolution.epoch,
 				status,
 				lastAttemptAt: completedAt,
-				nextDueAt: automaticDue(this.policy, completedAt),
-				message: CREDENTIAL_MESSAGES[resolution.kind],
+				nextDueAt,
+				message: resolution.kind === "source" && resolution.reason
+					? CREDENTIAL_SOURCE_MESSAGES[resolution.reason] ?? CREDENTIAL_MESSAGES.source
+					: CREDENTIAL_MESSAGES[resolution.kind],
 			}),
 		);
 	}

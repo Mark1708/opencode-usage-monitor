@@ -1,5 +1,6 @@
 import type { ProviderRegistration } from "./contracts.js";
 import { deepseekProviderDefinition } from "./deepseek.js";
+import { grokProviderDefinition } from "./grok.js";
 import { openaiProviderDefinition } from "./openai.js";
 import { opencodeGoProviderDefinition } from "./opencode-go.js";
 import { zaiProviderDefinition } from "./zai.js";
@@ -9,6 +10,7 @@ export const BUILTIN_PROVIDER_CATALOG = createProviderCatalog([
 	zaiProviderDefinition.registration,
 	deepseekProviderDefinition.registration,
 	opencodeGoProviderDefinition.registration,
+	grokProviderDefinition.registration,
 ]);
 
 export function createProviderCatalog(

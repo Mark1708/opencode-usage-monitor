@@ -11,9 +11,13 @@ import serverPlugin from "../index.js";
 
 import { CONFIG_DEFAULTS } from "../config.js";
 import type { ResolvedUsageConfigV2 } from "../config-types.js";
+import { createCredentialResolver } from "../credentials.js";
 import { formatProviderMetricsForState } from "../format.js";
+import { createProviderCacheV2 } from "../provider-cache.js";
 import type { StandardUsageProvider } from "../providers/types.js";
+import { createRefreshCoordinator } from "../refresh.js";
 import type { ProviderRuntimeState, RefreshCoordinator } from "../refresh.js";
+import { parseUsageConfigV2 } from "../runtime-config.js";
 import usageTuiPlugin, {
 	createUsageTuiDefinition,
 	mountUsagePanel,
@@ -61,7 +65,7 @@ function deferred<T>(): {
 }
 
 async function settle(): Promise<void> {
-	for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+	for (let turn = 0; turn < 50; turn += 1) await Promise.resolve();
 }
 
 const resolvedConfig: ResolvedUsageConfigV2 = {
@@ -279,6 +283,7 @@ describe("TUI runtime cutover", () => {
 		});
 		const context = {
 			client: {},
+			location: { directory: "/fixture" },
 			data: {
 				on: () => () => { dataDisposals += 1; },
 			},
@@ -312,6 +317,124 @@ describe("TUI runtime cutover", () => {
 		expect(slotDisposals).toBe(1);
 		expect(dataDisposals).toBe(2);
 		expect(keymapLayers).toBe(1);
+	});
+});
+
+describe("Grok cold-start readiness", () => {
+	async function setupColdStart(useDefaultLocation = false) {
+		const parsed = parseUsageConfigV2({ version: 2, providers: { grok: {} } });
+		if (!parsed.ok) throw new Error("invalid config");
+		const config = {
+			...parsed.value,
+			providers: parsed.value.providers.map((provider) => provider.ok ? {
+				...provider,
+				binding: {
+					...provider.binding,
+					fetchUsage: async (): Promise<StandardUsageProvider> => ({
+						id: "grok", displayName: "grok", status: "ready", windows: [],
+					}),
+				},
+			} : provider),
+		};
+		const location = { directory: "/fixture/project" };
+		const ready = deferred<void>();
+		const calls: string[] = [];
+		const pluginLocations: unknown[] = [];
+		const rpcLocations: unknown[] = [];
+		let readinessSignal: AbortSignal | undefined;
+		let activated = false;
+		let coordinator: RefreshCoordinator | undefined;
+		const definition = createUsageTuiDefinition({
+			readRuntimeConfig: async () => ({
+				config, render: { ...CONFIG_DEFAULTS }, providers: {}, fingerprint: "grok",
+			}),
+			createRuntimeCoordinator: (resolved, readers) => {
+				coordinator = createRefreshCoordinator({
+					providers: resolved.providers, policy: resolved.refresh,
+					credentialResolver: createCredentialResolver(readers), cache: createProviderCacheV2(),
+				});
+				return coordinator;
+			},
+			watchConfig: () => undefined,
+			createReloadTrigger: (callback) => Object.assign(callback, { cancel: () => undefined }),
+			mountPanel: () => undefined,
+		});
+		const context = {
+			location: useDefaultLocation ? undefined : location,
+			client: {
+				plugin: { list: async (input: { location?: unknown }, options?: { signal?: AbortSignal }) => {
+					calls.push("plugins");
+					pluginLocations.push(input.location);
+					readinessSignal = options?.signal;
+					await ready.promise;
+					activated = true;
+					return [];
+				} },
+				rpc: () => ({ prepare: async (_input: unknown, options?: { location?: unknown }) => {
+					calls.push("prepare");
+					rpcLocations.push(options?.location);
+					if (!activated) throw { type: "rpc.unavailable", message: "RPC is unavailable" };
+					return "ready";
+				} }),
+				credential: { list: async () => {
+					calls.push("credentials");
+					return [{ id: "cred_fixture", integrationID: "xai", active: true, label: "xai",
+						value: { type: "oauth", access: "fixture-access", expires: Date.now() + 3_600_000 },
+					}];
+				} },
+			},
+			data: {
+				on: () => () => undefined,
+				location: { default: () => location },
+			},
+			theme: theme("light"),
+			keymap: { layer: () => undefined },
+			ui: {
+				slot: () => () => undefined,
+				toast: { show: () => undefined },
+			},
+		};
+		const cleanup = await Reflect.apply(definition.setup, undefined, [context]);
+		if (typeof cleanup !== "function" || !coordinator) throw new Error("Expected initialized TUI");
+		return {
+			ready, calls, pluginLocations, rpcLocations, location, coordinator, cleanup,
+			getReadinessSignal: () => readinessSignal,
+		};
+	}
+
+	test.each([false, true])("waits for location plugins before the first RPC (default location: %s)", async (useDefaultLocation) => {
+		const harness = await setupColdStart(useDefaultLocation);
+		const states: ProviderRuntimeState[] = [];
+		harness.coordinator.subscribe((next) => { states.push(...next); });
+		try {
+			await settle();
+			expect(harness.calls).toEqual(["plugins"]);
+			expect(harness.pluginLocations).toEqual([harness.location]);
+			expect(harness.coordinator.getStates()[0]?.status).toBe("refreshing");
+			harness.ready.resolve();
+			await settle();
+			expect(harness.calls).toContain("prepare");
+			expect(harness.calls.indexOf("prepare")).toBeGreaterThan(harness.calls.indexOf("plugins"));
+			expect(harness.rpcLocations.every((location) => location === harness.location)).toBe(true);
+			expect(harness.coordinator.getStates()[0]?.status).toBe("ready");
+			expect(states.some((state) => state.status === "error" || state.status === "needs_auth")).toBe(false);
+		} finally { await harness.cleanup(); }
+	});
+
+	test("cleanup aborts pending readiness and never starts a late OAuth RPC", async () => {
+		const harness = await setupColdStart();
+		await settle();
+		const signal = harness.getReadinessSignal();
+		try {
+			await harness.cleanup();
+			expect(signal?.aborted).toBe(true);
+			harness.ready.resolve();
+			await settle();
+			expect(harness.calls).toEqual(["plugins"]);
+		} finally {
+			harness.ready.resolve();
+			await harness.cleanup();
+		}
 	});
 });
 
