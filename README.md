@@ -316,6 +316,7 @@ An omitted percentage is accepted as zero only when `isUnifiedBillingUser` is tr
 - If Z.AI shows `partial` on an enterprise/org account, set `providers.zai.options.organization_id` and `providers.zai.options.project_id` (or `ZHIPU_ORGANIZATION_ID` / `ZHIPU_PROJECT_ID`) so the `?type=2` endpoint is used.
 - If DeepSeek shows `auth missing`, set `DEEPSEEK_API_KEY` or activate a DeepSeek credential in OpenCode.
 - If OpenCode Go shows `auth missing`, run `/connect`, select OpenCode Go, and enter its API key, or set `OPENCODE_GO_API_KEY`.
+- If Grok shows `xAI unavailable in your region`, xAI's edge refused a request from your current network exit. Transient denials are retried automatically about once a minute. If the status persists while `grok.com` opens in your browser, a long-lived OpenCode background service may be pinned to a stale network route (observed with TUN-style VPNs after a node switch): run `opencode service restart` and then `/usage-refresh`. No re-login is required.
 - If the panel shows a `config` error, migrate `usage-monitor.json` to the `version: 2` shape and define at least one provider under `providers`.
 - If the panel is too wide or narrow, adjust `ui.width` in `usage-monitor.json`.
 - If refreshes appear stale, lower `refresh.interval_ms` or check provider API connectivity.

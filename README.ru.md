@@ -317,6 +317,7 @@ Endpoint `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` исп�
 - Если Z.AI показывает `partial` на enterprise/org account, задайте `providers.zai.options.organization_id` и `providers.zai.options.project_id` или `ZHIPU_ORGANIZATION_ID` / `ZHIPU_PROJECT_ID`, чтобы использовался endpoint `?type=2`.
 - Если DeepSeek показывает `auth missing`, задайте `DEEPSEEK_API_KEY` или активируйте DeepSeek credential в OpenCode.
 - Если OpenCode Go показывает `auth missing`, выполните `/connect`, выберите OpenCode Go и введите его API key либо задайте `OPENCODE_GO_API_KEY`.
+- Если Grok показывает `xAI unavailable in your region`, edge xAI отказал запросу с текущего сетевого выхода. Временные отказы автоматически повторяются примерно раз в минуту. Если статус не проходит, а `grok.com` открывается в браузере, долгоживущий фоновый сервис OpenCode может «залипнуть» на старом сетевом маршруте (наблюдалось с TUN-VPN при смене узла): выполните `opencode service restart`, затем `/usage-refresh`. Повторный вход не требуется.
 - Если panel показывает `config` error, мигрируйте `usage-monitor.json` на `version: 2` shape и задайте хотя бы один provider в `providers`.
 - Если panel слишком широкий или узкий, измените `ui.width` в `usage-monitor.json`.
 - Если refresh выглядит устаревшим, уменьшите `refresh.interval_ms` или проверьте provider API connectivity.
