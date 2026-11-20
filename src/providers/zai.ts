@@ -14,6 +14,9 @@ import { asRecord, createStatusProvider, createTimeoutController, normalizeEpoch
 import type { ProviderContext, StandardModelBreakdown, StandardUsageProvider, StandardUsageWindow } from "./types.js";
 
 const QUOTA_PATH = "/api/monitor/usage/quota/limit";
+const RESET_LIST_PATH = "/api/biz/customer-package-reset/list";
+const RESET_LIST_TARGET_TYPE = "PERSONAL";
+const RESET_EXPIRE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 const ZAI_BASE_URL = "https://api.z.ai";
 const ZHIPU_BASE_URL = "https://open.bigmodel.cn";
 const statusProvider = createStatusProvider("zai", "z.ai");
@@ -24,6 +27,7 @@ export type ZaiOptions = Readonly<{
   plan: "personal" | "enterprise";
   organizationId?: string;
   projectId?: string;
+  show_resets: boolean;
 }>;
 
 type ZaiLimit = {
@@ -120,7 +124,13 @@ async function fetchZaiUsage(context: ProviderFetchContext<ZaiOptions>): Promise
     ) {
       return statusProvider("forbidden", "forbidden");
     }
-    return normalizeZaiQuota(raw, baseUrl);
+    // Reset cards live in a separate read-only inventory endpoint. Enterprise
+    // scoping for it is unverified, so it is fetched for personal plans only.
+    const resetsRaw =
+      context.options.plan === "personal" && context.options.show_resets !== false
+        ? await fetchZaiResetInventory(baseUrl, headers, controller)
+        : undefined;
+    return normalizeZaiQuota(raw, baseUrl, Date.now(), resetsRaw);
   } catch (error: unknown) {
     const message = context.signal.aborted
       ? "cancelled"
@@ -130,6 +140,25 @@ async function fetchZaiUsage(context: ProviderFetchContext<ZaiOptions>): Promise
     return statusProvider("error", message);
   } finally {
     controller.dispose();
+  }
+}
+
+async function fetchZaiResetInventory(
+  baseUrl: string,
+  headers: Record<string, string>,
+  controller: ReturnType<typeof createTimeoutController>,
+): Promise<unknown> {
+  try {
+    const response = await fetch(
+      `${baseUrl}${RESET_LIST_PATH}?targetType=${RESET_LIST_TARGET_TYPE}`,
+      { headers, signal: controller.signal },
+    );
+    if (!response.ok) return undefined;
+    return await response.json();
+  } catch (error: unknown) {
+    // Cancellation and timeout stay terminal; other failures only drop resets.
+    if (controller.signal.aborted) throw error;
+    return undefined;
   }
 }
 
@@ -203,8 +232,12 @@ function resolveSetting(configValue: string | undefined, envValue: string | unde
 function parseZaiOptions(input: unknown): ValidationResult<ZaiOptions> {
   const options = asOptionsObject(input);
   if (!options) return invalidOptions("options", "options must be an object");
-  const unknownKey = Object.keys(options).find((key) => !["plan", "organization_id", "project_id"].includes(key));
+  const unknownKey = Object.keys(options).find((key) => !["plan", "organization_id", "project_id", "show_resets"].includes(key));
   if (unknownKey) return invalidOptions(unknownKey, "unknown option");
+  const showResets = readOption(options, "show_resets");
+  if (showResets !== undefined && typeof showResets !== "boolean") {
+    return invalidOptions("show_resets", "must be a boolean");
+  }
   const plan = readOption(options, "plan") ?? "personal";
   if (plan !== "personal" && plan !== "enterprise") return invalidOptions("plan", "plan must be personal or enterprise");
   const organization = parseIdentifierOption(options, "organization_id");
@@ -221,7 +254,12 @@ function parseZaiOptions(input: unknown): ValidationResult<ZaiOptions> {
   }
   return {
     ok: true,
-    value: { plan, ...(organizationId ? { organizationId } : {}), ...(projectId ? { projectId } : {}) },
+    value: {
+      plan,
+      ...(organizationId ? { organizationId } : {}),
+      ...(projectId ? { projectId } : {}),
+      show_resets: typeof showResets === "boolean" ? showResets : true,
+    },
   };
 }
 
@@ -267,7 +305,7 @@ function invalidOptions<T>(path: string, message: string): ValidationResult<T> {
   return { ok: false, issues };
 }
 
-export function normalizeZaiQuota(raw: unknown, baseUrl: string = "https://api.z.ai", nowMs: number = Date.now()): StandardUsageProvider {
+export function normalizeZaiQuota(raw: unknown, baseUrl: string = "https://api.z.ai", nowMs: number = Date.now(), resetsRaw?: unknown): StandardUsageProvider {
   const payload = extractPayload(raw);
   const plan = readString(payload.level);
   const limits = parseLimits(payload.limits);
@@ -276,10 +314,13 @@ export function normalizeZaiQuota(raw: unknown, baseUrl: string = "https://api.z
     return window ? [window] : [];
   });
   const modelBreakdown = limits.flatMap((limit) => limit.usageDetails ?? []);
+  const resets = resetsRaw === undefined ? undefined : normalizeZaiResets(resetsRaw, nowMs);
+  const resetDetails = zaiResetDetails(resets, nowMs);
   const details = [
     plan
       ? { key: "plan", label: "plan", value: { kind: "text" as const, value: plan }, visibility: "detail" as const, priority: 100 }
       : undefined,
+    ...resetDetails,
     ...modelBreakdown.flatMap((model, index) => {
       const value = model.used ?? model.percentage;
       return value === undefined
@@ -310,6 +351,122 @@ export function normalizeZaiQuota(raw: unknown, baseUrl: string = "https://api.z
 function extractPayload(raw: unknown): Record<string, unknown> {
   const root = asRecord(raw) ?? {};
   return asRecord(root.data) ?? root;
+}
+
+type ZaiResetGroup = Readonly<{
+  count: number;
+  nearestExpiryMs?: number;
+  nearestExpiryDate?: string;
+}>;
+
+type ZaiResetInventory = Readonly<{
+  fiveHour: ZaiResetGroup;
+  week: ZaiResetGroup;
+  total: number;
+  nearestExpiryMs?: number;
+}>;
+
+export function normalizeZaiResets(raw: unknown, nowMs: number): ZaiResetInventory | undefined {
+  const data = asRecord(asRecord(raw)?.data);
+  if (!data) return undefined;
+  const fiveHour = countAvailableResets(data.fiveHourResets, nowMs);
+  const week = countAvailableResets(data.weekResets, nowMs);
+  const total = fiveHour.count + week.count;
+  const nearest = [fiveHour, week]
+    .filter((group): group is ZaiResetGroup & { nearestExpiryMs: number } => group.nearestExpiryMs !== undefined)
+    .sort((left, right) => left.nearestExpiryMs - right.nearestExpiryMs)[0];
+  return {
+    fiveHour,
+    week,
+    total,
+    ...(nearest ? { nearestExpiryMs: nearest.nearestExpiryMs } : {}),
+  };
+}
+
+function countAvailableResets(raw: unknown, nowMs: number): ZaiResetGroup {
+  if (!Array.isArray(raw)) return { count: 0 };
+  let count = 0;
+  let nearestExpiryMs: number | undefined;
+  let nearestExpiryDate: string | undefined;
+  for (const entry of raw) {
+    const data = asRecord(entry);
+    if (!data || data.available !== true) continue;
+    const expiryMs = parseResetExpireTime(data.expireTime);
+    // Cards are invalidated by their own expiry; recently expired ones may
+    // still be listed by the API, so an expiry in the past does not count.
+    if (expiryMs !== undefined && expiryMs <= nowMs) continue;
+    count += 1;
+    if (expiryMs !== undefined && (nearestExpiryMs === undefined || expiryMs < nearestExpiryMs)) {
+      nearestExpiryMs = expiryMs;
+      nearestExpiryDate = readString(data.expireTime)?.slice(0, 10);
+    }
+  }
+  return {
+    count,
+    ...(nearestExpiryMs !== undefined ? { nearestExpiryMs } : {}),
+    ...(nearestExpiryDate !== undefined ? { nearestExpiryDate } : {}),
+  };
+}
+
+// Z.AI returns card expiry as "yyyy-MM-dd HH:mm:ss" in UTC+8.
+function parseResetExpireTime(value: unknown): number | undefined {
+  if (typeof value !== "string" || !RESET_EXPIRE_TIME_PATTERN.test(value)) return undefined;
+  const parsed = Date.parse(`${value.replace(" ", "T")}+08:00`);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function zaiResetDetails(resets: ZaiResetInventory | undefined, nowMs: number) {
+  if (!resets || resets.total <= 0) return [];
+  const summary = zaiResetSummaryDetail(resets.total, resets.nearestExpiryMs, nowMs);
+  const groups = [
+    resets.week.count > 0
+      ? zaiResetGroupDetail("resets-week", "reset week", resets.week)
+      : undefined,
+    resets.fiveHour.count > 0
+      ? zaiResetGroupDetail("resets-5h", "reset 5h", resets.fiveHour)
+      : undefined,
+  ].filter((detail): detail is NonNullable<typeof detail> => detail !== undefined);
+  return [summary, ...groups];
+}
+
+function zaiResetSummaryDetail(total: number, nearestExpiryMs: number | undefined, nowMs: number) {
+  const remainingExpiryMs = nearestExpiryMs === undefined ? undefined : nearestExpiryMs - nowMs;
+  const expiresInDays =
+    remainingExpiryMs === undefined
+      ? undefined
+      : Math.max(0, Math.ceil(remainingExpiryMs / 86_400_000));
+  return {
+    key: "resets",
+    label: "resets",
+    value: {
+      kind: "text" as const,
+      value: `${total}${expiresInDays === undefined ? "" : ` · expires ${expiresInDays}d`}`,
+    },
+    visibility: "summary" as const,
+    priority: 95,
+    ...(remainingExpiryMs === undefined
+      ? {}
+      : { tone: zaiResetExpiryTone(remainingExpiryMs) }),
+  };
+}
+
+function zaiResetGroupDetail(key: string, label: string, group: ZaiResetGroup) {
+  return {
+    key,
+    label,
+    value: {
+      kind: "text" as const,
+      value: `${group.count}${group.nearestExpiryDate === undefined ? "" : ` · expires ${group.nearestExpiryDate}`}`,
+    },
+    visibility: "detail" as const,
+    priority: key === "resets-week" ? 60 : 59,
+  };
+}
+
+function zaiResetExpiryTone(remainingMs: number): "normal" | "warn" | "bad" {
+  if (remainingMs <= 2 * 3_600_000) return "bad";
+  if (remainingMs <= 24 * 3_600_000) return "warn";
+  return "normal";
 }
 
 function parseLimits(raw: unknown): ZaiLimit[] {

@@ -86,12 +86,16 @@ export function mockJsonResponse(body: unknown, status = 200): void {
   globalThis.fetch = (((() => Promise.resolve(new Response(JSON.stringify(body), { status }))) as unknown) as typeof fetch);
 }
 
-export type CapturedRequest = { url: string; headers: Record<string, string> };
+export type CapturedRequest = { url: string; headers: Record<string, string>; urls: string[] };
 
 export function captureRequest(body: unknown): CapturedRequest {
-  const captured: CapturedRequest = { url: "", headers: {} };
+  const captured: CapturedRequest = { url: "", headers: {}, urls: [] };
   globalThis.fetch = (((input: RequestInfo | URL, init?: RequestInit) => {
-    captured.url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    // Keep the first captured URL as the primary request; providers may issue
+    // supplemental follow-up requests after the primary endpoint.
+    if (captured.url === "") captured.url = url;
+    captured.urls.push(url);
     const headers = init?.headers;
     if (headers instanceof Headers) {
       headers.forEach((value, key) => { captured.headers[key] = value; });
