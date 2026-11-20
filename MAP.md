@@ -89,6 +89,7 @@ Z.AI uses `GET {baseUrl}/api/monitor/usage/quota/limit` with raw `Authorization:
 - When both enterprise identifiers are present, the provider uses `?type=2` and `Bigmodel-Organization` / `Bigmodel-Project` headers.
 - Limits with reliable `used + limit` data map to `usage.kind="quota"`; percent-only limits map to `usage.kind="percent"`.
 - Unknown limit units fall back to normalized type/name labels and `period.kind="unknown"`.
+- With `show_resets` (default) on personal plans, `GET {baseUrl}/api/biz/customer-package-reset/list?targetType=PERSONAL` maps available `weekResets`/`fiveHourResets` cards (UTC+8 `expireTime` strings) to a summary `resets N · expires Xd` detail plus per-window detail rows. Unavailable and already-expired cards are not counted; supplemental failures only omit these rows; the plugin never redeems cards.
 
 ### DeepSeek
 

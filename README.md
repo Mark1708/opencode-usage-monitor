@@ -241,6 +241,12 @@ export ZHIPU_ORGANIZATION_ID="your-org-id"
 export ZHIPU_PROJECT_ID="your-project-id"
 ```
 
+### Quota reset cards
+
+Z.AI occasionally grants one-time quota reset cards. With `providers.zai.options.show_resets` (default `true`) on `personal` plans, the provider also reads `GET {baseUrl}/api/biz/customer-package-reset/list?targetType=PERSONAL` and shows available 5-hour and weekly reset cards with the nearest expiry, in the same `resets N · expires Xd` summary style as OpenAI (colored `bad` within 2 hours and `warn` within 24 hours of expiry). Expanded details list per-window counts with their expiry dates.
+
+Each card has its own expiration and becomes invalid once expired; cards that already expired are not counted even when the API still lists them. Resetting the weekly quota also resets the 5-hour quota without consuming an additional 5-hour reset, so weekly and 5-hour cards are listed separately. A failure of this supplemental request only omits the reset rows; quota windows stay visible. The plugin never redeems cards — redemption stays in the Z.AI dashboard. Enterprise plans skip the supplemental request until its scoping is verified.
+
 ### DeepSeek
 
 The plugin displays the DeepSeek account balance (CNY) from the balance endpoint. Configure an API key via OpenCode auth storage or:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added Z.AI quota reset cards: available 5-hour and weekly card counts with the nearest expiry from the personal reset-card endpoint, rendered like OpenAI's resets summary. Disable with `providers.zai.options.show_resets: false`.
+
 ### Fixed
 
 - Corrected OpenCode v2 plugin configuration paths and schema references in the English and Russian installation guides.
